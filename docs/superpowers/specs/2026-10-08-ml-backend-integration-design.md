@@ -3,6 +3,10 @@
 **Data:** 2026-10-08
 **Estado:** desenho aprovado em conversa; documento aguardando revisão do usuário
 
+> A integração posterior com a `main` e a ampliação do contrato v1 estão em
+> `2026-10-08-ml-main-deepsearch-integration-design.md`. Em caso de diferença
+> sobre vereditos e DeepSearch, esse desenho posterior prevalece.
+
 ## Objetivo
 
 Conectar o serviço de verificação do repositório `checa-ai-ml` ao fluxo real do
