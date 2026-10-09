@@ -31,10 +31,9 @@ geração. A imagem da API instala `requirements-api.txt`, lista separada das
 dependências da `main`; ela ainda não inclui Tavily e Langfuse.
 
 Na `main`, o DeepSearch já devolve o status `deep_searched` para `/api/debunk`,
-mas devolve `sources: []` e um texto sem citações estruturadas. Fontes web
-citadas na v1, o campo `source_type` e seu orçamento de resposta são adaptações
-novas exigidas pelo contrato ampliado aprovado, não comportamento já existente
-na `main`.
+com `sources: []` e um resumo cauteloso sem citações estruturadas. A v1 mantém
+essa distinção: fontes estruturadas são apenas laudos usados em `matched`;
+DeepSearch não transforma resultados da Tavily em fontes de checagem.
 
 ## Fluxo de verificação
 
@@ -47,10 +46,10 @@ na `main`.
    saída e observabilidade da `main`.
 4. Quando o score for insuficiente ou o modelo indicar que os laudos não tratam
    da alegação, usar o DeepSearch/Tavily da `main`. Resumir seus resultados de
-   forma neutra, sem veredito factual ou crédito de checagem oficial. A v1 deve
-   devolver apenas URLs HTTP(S) presentes nos resultados da busca e citadas por
-   número no resumo. Tratar títulos e snippets web como dados não confiáveis.
-   Limitar o tamanho da resposta, sem cortar URLs ou ressalvas.
+   forma neutra, sem veredito factual ou crédito de checagem oficial. A v1
+   devolve o resumo com `sources: []`, como o fluxo da `main`, e não exige
+   citações numeradas para ele. Tratar títulos e snippets web como dados não
+   confiáveis e preservar a ressalva do DeepSearch.
 5. Sem evidência adequada no corpus nem resultado web útil, devolver evidência
    insuficiente. Uma entrada bloqueada gera recusa explícita, sem iniciar busca.
 
@@ -59,8 +58,8 @@ continuar sendo usados onde se aplicarem. A geração curta da v1 usa saída
 estruturada para reconhecer `laudos_tratam_alegacao: false` e instruções
 próprias para o contrato do backend; ela não deve ser vinculada indevidamente à
 versão do prompt `debunk` do fluxo web. A integração deve compartilhar as etapas
-de busca e segurança e manter a apresentação de cada rota separada. A adaptação
-da v1 para fontes web não deve mudar o corpo de resposta de `/api/debunk`.
+de busca e segurança e manter a apresentação de cada rota separada. O uso do
+DeepSearch pela v1 não deve mudar o corpo de resposta de `/api/debunk`.
 
 ## Contrato HTTP v1 ampliado
 
@@ -71,21 +70,21 @@ ao menos um caractere não branco. A resposta conserva `schema_version: 1`,
 | `verdict` | Significado | Narrativa | Fontes | Score |
 |---|---|---|---|---|
 | `matched` | Laudos do corpus sustentam a resposta | Curta e com citações verificadas | 1–2 laudos HTTP(S) citados | Melhor similaridade do corpus |
-| `deep_searched` | Busca web gerou contexto cauteloso, sem checagem oficial | Resumo neutro com ressalva | URLs HTTP(S) da Tavily usadas no resumo | Melhor similaridade do corpus, possivelmente 0 |
+| `deep_searched` | Busca web gerou contexto cauteloso, sem checagem oficial | Resumo neutro com ressalva | `[]` | Melhor similaridade do corpus, possivelmente 0 |
 | `insufficient_evidence` | Nem corpus nem web sustentam resposta útil | `null` | `[]` | Melhor similaridade do corpus, possivelmente 0 |
 | `blocked` | Guardrail impediu a solicitação ou a saída | Recusa segura | `[]` | `null` se a entrada foi bloqueada antes da busca |
 
-Cada fonte mantém `title`, `domain` e `url`; `source_type` distingue
-`fact_check` de `web`. O veredito também distingue a procedência da resposta.
+Cada fonte de `matched` mantém `title`, `domain` e `url`. O veredito distingue a
+procedência da resposta.
 `similarity_score` é um dado de auditoria do Qdrant, nunca probabilidade de
 verdade nem avaliação de confiabilidade da web. Uma resposta `deep_searched`
 não pode ser rotulada ou formatada como `matched` pelo consumidor.
 
-A contranarrativa e os links selecionados devem caber no orçamento reservado
-pelo contrato atual para uma mensagem final do backend de 1.000 caracteres.
-Nenhuma URL ou aviso é truncado silenciosamente. Uma resposta `matched` ou
-`deep_searched` requer ao menos uma fonte usada e visível. O resumo web deve
-preservar o aviso de cautela do fluxo da `main`.
+A contranarrativa de `matched` e seus links selecionados devem caber no orçamento
+reservado pelo contrato atual para uma mensagem final do backend de 1.000
+caracteres. Nenhuma URL é truncada silenciosamente e pelo menos um laudo citado
+deve ficar visível. O resumo `deep_searched` não apresenta laudos como prova e
+preserva o aviso de cautela do fluxo da `main`.
 
 ## Falhas e compatibilidade
 
@@ -121,10 +120,10 @@ publicar a branch automaticamente.
    perda das rotas e componentes de qualquer branch.
 2. Testes verificam os quatro vereditos v1, bloqueio antes da busca, filtragem
    de chunks perigosos e fallback web por score baixo ou abstinência do modelo.
-3. `matched` retorna apenas laudos citados; `deep_searched` retorna apenas
-   resultados Tavily usados, com procedência e ressalva claras. URLs inventadas,
-   não HTTP(S) e respostas sem fonte válida são rejeitadas ou não retornadas como
-   resposta fundamentada.
+3. `matched` retorna apenas laudos citados, com URLs HTTP(S) válidas;
+   `deep_searched` retorna resumo cauteloso com `sources: []`, sem apresentar
+   resultados Tavily como checagens. Citações inventadas ou respostas `matched`
+   sem laudo válido não são devolvidas como resposta fundamentada.
 4. Os limites de tamanho, a concorrência da rota, readiness e os erros sem
    veredito são cobertos por testes relevantes.
 5. Os testes existentes de `/api/debunk`, guardrails, prompts, observabilidade,
