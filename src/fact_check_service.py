@@ -96,9 +96,11 @@ class VerificationGenerationError(RuntimeError):
 def _safe_source_url(url: str) -> bool:
     try:
         parsed = urlsplit(url)
+        port = parsed.port
         return (
             parsed.scheme in {"http", "https"}
             and bool(parsed.hostname)
+            and (port is None or port > 0)
             and parsed.username is None
             and parsed.password is None
             and not any(char.isspace() for char in url)
@@ -582,6 +584,8 @@ class FactCheckService:
 
         sources = []
         seen_urls: set[str] = set()
+        source_numbers: dict[str, int] = {}
+        citation_numbers: dict[int, int] = {}
         for number, ev in enumerate(used, 1):
             if number not in cited:
                 continue
@@ -590,10 +594,15 @@ class FactCheckService:
             if ev.url not in seen_urls:
                 sources.append({"title": ev.titulo, "domain": ev.dominio, "url": ev.url})
                 seen_urls.add(ev.url)
+                source_numbers[ev.url] = len(sources)
+            citation_numbers[number] = source_numbers[ev.url]
         allowed_urls = seen_urls
         narrative_urls = {url.rstrip(".,;:!?") for url in _URL_PATTERN.findall(narrative)}
         if narrative_urls - allowed_urls or set(answer.fontes_usadas) - allowed_urls:
             raise VerificationGenerationError("URL sem fonte recuperada")
+        narrative = _CITATION_PATTERN.sub(
+            lambda match: f"[{citation_numbers[int(match.group(1))]}]", narrative
+        )
 
         val_result = validate_output(narrative)
         if not val_result.is_safe:

@@ -54,10 +54,10 @@ async def verify(body: VerifyRequest) -> VerifyResponse:
         )
         return VerifyResponse.model_validate(result)
     except VerificationGenerationError as exc:
-        log.warning("Verification generation failed: %s", exc)
+        log.warning("Verification generation failed")
         raise HTTPException(status_code=502, detail="Verification generation failed") from exc
     except Exception as exc:
-        log.exception("Verification request failed")
+        log.error("Verification request failed")
         raise HTTPException(status_code=503, detail="Verification unavailable") from exc
 
 
@@ -70,9 +70,10 @@ async def ready() -> dict[str, str]:
         collection = await to_thread.run_sync(service._qdrant.get_collection, COLLECTION_NAME)
         vectors = collection.config.params.vectors
         size = vectors.get("size") if isinstance(vectors, dict) else vectors.size
-        if size != service._embedder.dimension:
+        dimension = await to_thread.run_sync(lambda: service._embedder.dimension)
+        if size != dimension:
             raise ValueError("Collection vector dimension does not match embedding provider")
     except Exception as exc:
-        log.warning("Verification service not ready: %s", exc)
+        log.warning("Verification service not ready")
         raise HTTPException(status_code=503, detail="Verification index unavailable") from exc
     return {"status": "ready"}

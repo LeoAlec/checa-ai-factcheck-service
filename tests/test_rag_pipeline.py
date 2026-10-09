@@ -137,7 +137,7 @@ def test_v1_matched_returns_only_cited_sources(service):
     assert result["schema_version"] == 1
     assert result["verdict"] == "matched"
     assert result["similarity_score"] == 0.90
-    assert result["counter_narrative"] == "O fato foi verificado [2]."
+    assert result["counter_narrative"] == "O fato foi verificado [1]."
     assert [source["url"] for source in result["sources"]] == ["https://g1.globo.com/b"]
 
 
@@ -162,9 +162,12 @@ def test_v1_rejects_fabricated_citations(service, bad_output):
         service.verify_claim_for_backend("alegação curta")
 
 
-def test_v1_rejects_unsafe_cited_source(service):
+@pytest.mark.parametrize("url", [
+    "javascript:alert(1)", "https://example.org:invalid/check", "https://example.org:99999/check",
+])
+def test_v1_rejects_unsafe_cited_source(service, url):
     unsafe = hit("a", 0.90)
-    unsafe.payload["url"] = "javascript:alert(1)"
+    unsafe.payload["url"] = url
     service.hits = [unsafe]
     service._call_llm = lambda system, user: "Afirmação verificada [1]."
 
@@ -182,6 +185,17 @@ def test_v1_deduplicates_cited_source_urls(service):
     result = service.verify_claim_for_backend("alegação curta")
 
     assert [source["url"] for source in result["sources"]] == ["https://g1.globo.com/a"]
+    assert result["counter_narrative"] == "O fato foi verificado [1] [1]."
+
+
+def test_v1_renumbers_citation_after_source_filter(service):
+    service.hits = [hit("a", 0.90), hit("b", 0.85)]
+    service._call_llm = lambda system, user: "O laudo b esclarece [2]."
+
+    result = service.verify_claim_for_backend("alegação curta")
+
+    assert result["counter_narrative"] == "O laudo b esclarece [1]."
+    assert [source["url"] for source in result["sources"]] == ["https://g1.globo.com/b"]
 
 
 def test_v1_chooses_source_that_fits_reply_budget(service):

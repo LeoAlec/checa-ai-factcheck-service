@@ -1,5 +1,6 @@
 import asyncio
 import threading
+import time
 from types import SimpleNamespace
 
 import httpx
@@ -103,6 +104,33 @@ async def test_generation_error_is_not_a_verdict(client, fake_service):
 
 
 @pytest.mark.asyncio
+async def test_upstream_error_does_not_log_private_content(client, fake_service, caplog):
+    service, _ = fake_service
+    secret = "alegação privada ou chave secreta"
+
+    def fail(text):
+        raise RuntimeError(secret)
+
+    service.verify_claim_for_backend = fail
+    response = await client.post("/api/v1/verify", json={"text": secret})
+
+    assert response.status_code == 503
+    assert secret not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_readiness_error_does_not_log_private_content(client, fake_service, caplog):
+    service, _ = fake_service
+    secret = "private-key-in-upstream-error"
+    service._qdrant.get_collection = lambda name: (_ for _ in ()).throw(RuntimeError(secret))
+
+    response = await client.get("/ready")
+
+    assert response.status_code == 503
+    assert secret not in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_readiness_checks_collection_and_dimension(client, fake_service):
     service, _ = fake_service
     assert (await client.get("/ready")).status_code == 200
@@ -116,6 +144,31 @@ async def test_readiness_checks_collection_and_dimension(client, fake_service):
 async def test_readiness_requires_generation_key(client, fake_service, monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     assert (await client.get("/ready")).status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_slow_embedding_dimension_does_not_block_health(client, fake_service):
+    service, _ = fake_service
+    entered = threading.Event()
+    release = threading.Event()
+
+    class SlowEmbedder:
+        @property
+        def dimension(self):
+            entered.set()
+            release.wait(timeout=1)
+            return 1536
+
+    service._embedder = SlowEmbedder()
+    started = time.monotonic()
+    pending = asyncio.create_task(client.get("/ready"))
+    try:
+        assert await asyncio.to_thread(entered.wait, 1)
+        assert time.monotonic() - started < 0.2
+        assert (await asyncio.wait_for(client.get("/health"), 0.1)).status_code == 200
+    finally:
+        release.set()
+        await pending
 
 
 @pytest.mark.asyncio
