@@ -24,8 +24,17 @@ de WhatsApp de até 1.000 caracteres. Desde então, `origin/main` chegou a
 `c58a22d` com moderação de entrada, detecção de prompt injection, exclusão de
 chunks de alto risco, validação de saída, grounding de URLs, abstinência indicada
 pelo modelo, fallback de busca web, tracing Langfuse, gestão de prompts e CI.
-As mudanças se sobrepõem principalmente em `src/fact_check_service.py`,
-`app.py`, README e `.env.example`.
+O merge tem quatro conflitos textuais: `.env.example`, `README.md`, `app.py` e
+`src/fact_check_service.py`. O último concentra o conflito funcional: a branch
+adicionou `verify_claim_for_backend`, enquanto a `main` reestruturou a busca e a
+geração. A imagem da API instala `requirements-api.txt`, lista separada das
+dependências da `main`; ela ainda não inclui Tavily e Langfuse.
+
+Na `main`, o DeepSearch já devolve o status `deep_searched` para `/api/debunk`,
+mas devolve `sources: []` e um texto sem citações estruturadas. Fontes web
+citadas na v1, o campo `source_type` e seu orçamento de resposta são adaptações
+novas exigidas pelo contrato ampliado aprovado, não comportamento já existente
+na `main`.
 
 ## Fluxo de verificação
 
@@ -40,7 +49,8 @@ As mudanças se sobrepõem principalmente em `src/fact_check_service.py`,
    da alegação, usar o DeepSearch/Tavily da `main`. Resumir seus resultados de
    forma neutra, sem veredito factual ou crédito de checagem oficial. A v1 deve
    devolver apenas URLs HTTP(S) presentes nos resultados da busca e citadas por
-   número no resumo. Limitar o tamanho da resposta, sem cortar URLs ou ressalvas.
+   número no resumo. Tratar títulos e snippets web como dados não confiáveis.
+   Limitar o tamanho da resposta, sem cortar URLs ou ressalvas.
 5. Sem evidência adequada no corpus nem resultado web útil, devolver evidência
    insuficiente. Uma entrada bloqueada gera recusa explícita, sem iniciar busca.
 
@@ -48,8 +58,9 @@ Os componentes existentes de prompt, tracing e cliente OpenAI da `main` devem
 continuar sendo usados onde se aplicarem. A geração curta da v1 usa saída
 estruturada para reconhecer `laudos_tratam_alegacao: false` e instruções
 próprias para o contrato do backend; ela não deve ser vinculada indevidamente à
-versão do prompt `debunk` do fluxo web. A integração deve evitar dois caminhos
-de busca ou segurança com regras divergentes.
+versão do prompt `debunk` do fluxo web. A integração deve compartilhar as etapas
+de busca e segurança e manter a apresentação de cada rota separada. A adaptação
+da v1 para fontes web não deve mudar o corpo de resposta de `/api/debunk`.
 
 ## Contrato HTTP v1 ampliado
 
@@ -72,8 +83,7 @@ não pode ser rotulada ou formatada como `matched` pelo consumidor.
 
 A contranarrativa e os links selecionados devem caber no orçamento reservado
 pelo contrato atual para uma mensagem final do backend de 1.000 caracteres.
-Nenhuma URL
-ou aviso é truncado silenciosamente. Uma resposta `matched` ou
+Nenhuma URL ou aviso é truncado silenciosamente. Uma resposta `matched` ou
 `deep_searched` requer ao menos uma fonte usada e visível. O resumo web deve
 preservar o aviso de cautela do fluxo da `main`.
 
@@ -99,8 +109,11 @@ Fazer merge de `origin/main` na branch local e resolver cada conflito pela
 intenção das duas alterações. Preservar workflows, prompts e dependências da
 `main`, além de Dockerfile, Compose e dependências específicas da API da branch.
 Consolidar README e `.env.example`, incluindo configuração de Tavily e Langfuse
-necessária ao fluxo integrado. Não reescrever o histórico nem publicar a branch
-automaticamente.
+necessária ao fluxo integrado. Completar `requirements-api.txt` com as
+dependências importadas no caminho de startup e verificação da API e propagar
+as configurações necessárias pelo Compose. Não registrar alegações, snippets,
+laudos ou chaves em logs do caminho integrado. Não reescrever o histórico nem
+publicar a branch automaticamente.
 
 ## Critérios de aceite
 
@@ -116,6 +129,7 @@ automaticamente.
    veredito são cobertos por testes relevantes.
 5. Os testes existentes de `/api/debunk`, guardrails, prompts, observabilidade,
    API v1 e pipeline RAG passam na árvore integrada. A configuração Compose é
-   validada; build e teste operacional dependentes de Docker/Qdrant são
-   executados quando o ambiente estiver disponível e qualquer limitação é
-   relatada com precisão.
+   validada; a imagem inicia com as dependências do fluxo da `main` e as
+   configurações de Tavily e Langfuse são repassadas quando presentes. Build e
+   teste operacional dependentes de Docker/Qdrant são executados quando o
+   ambiente estiver disponível; qualquer limitação é relatada com precisão.
