@@ -1,7 +1,7 @@
 # Integração da API de verificação com a main e o DeepSearch
 
 **Data:** 2026-10-08
-**Estado:** desenho aprovado em conversa; documento aguardando revisão do usuário
+**Estado:** aprovado pelo usuário em 2026-10-09
 
 ## Objetivo
 
@@ -48,8 +48,7 @@ DeepSearch não transforma resultados da Tavily em fontes de checagem.
    da alegação, usar o DeepSearch/Tavily da `main`. Resumir seus resultados de
    forma neutra, sem veredito factual ou crédito de checagem oficial. A v1
    devolve o resumo com `sources: []`, como o fluxo da `main`, e não exige
-   citações numeradas para ele. Tratar títulos e snippets web como dados não
-   confiáveis e preservar a ressalva do DeepSearch.
+   citações numeradas para ele. Preservar a ressalva do DeepSearch.
 5. Sem evidência adequada no corpus nem resultado web útil, devolver evidência
    insuficiente. Uma entrada bloqueada gera recusa explícita, sem iniciar busca.
 
