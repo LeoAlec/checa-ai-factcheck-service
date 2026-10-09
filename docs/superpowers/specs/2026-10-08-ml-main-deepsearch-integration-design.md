@@ -12,12 +12,9 @@ publicada na `main`; seu contrato v1 pode ser ampliado neste PR para entregar
 também a pesquisa web cautelosa do DeepSearch/Tavily. A rota `POST /api/debunk`
 continua servindo a interface web com o comportamento da `main`.
 
-O conflito deste PR está no repositório `checa-ai-ml`: a branch atual e a
-`main` dele alteraram os mesmos arquivos do serviço FastAPI. A resolução deste
-PR modifica apenas esse repositório. O repositório irmão `checa-ai`, que contém
-o worker do WhatsApp, não participa do merge. Seu futuro adaptador HTTP terá
-de entender o contrato v1 ampliado antes de usá-lo. Não fazer push como parte
-da resolução local sem revisar o resultado com o usuário.
+Esta entrega altera apenas `checa-ai-ml`. O adaptador do repositório irmão
+`checa-ai` deverá consumir o contrato v1 ampliado em sua própria implementação.
+Não fazer push como parte da resolução local sem revisar o resultado com o usuário.
 
 ## Contexto
 
@@ -27,9 +24,8 @@ de WhatsApp de até 1.000 caracteres. Desde então, `origin/main` chegou a
 `c58a22d` com moderação de entrada, detecção de prompt injection, exclusão de
 chunks de alto risco, validação de saída, grounding de URLs, abstinência indicada
 pelo modelo, fallback de busca web, tracing Langfuse, gestão de prompts e CI.
-O Git aponta conflitos textuais em `src/fact_check_service.py`, `app.py`,
-`README.md` e `.env.example`. O primeiro concentra o conflito de comportamento;
-os demais reúnem rota, documentação e configuração de ambas as branches.
+As mudanças se sobrepõem principalmente em `src/fact_check_service.py`,
+`app.py`, README e `.env.example`.
 
 ## Fluxo de verificação
 
