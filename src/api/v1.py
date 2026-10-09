@@ -37,8 +37,8 @@ class VerificationSource(BaseModel):
 
 class VerifyResponse(BaseModel):
     schema_version: Literal[1]
-    verdict: Literal["matched", "insufficient_evidence"]
-    similarity_score: float
+    verdict: Literal["matched", "deep_searched", "insufficient_evidence", "blocked"]
+    similarity_score: float | None
     counter_narrative: str | None
     sources: list[VerificationSource]
 

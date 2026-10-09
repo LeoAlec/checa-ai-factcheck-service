@@ -84,3 +84,47 @@ CLUSTER_HIGH_CONFIDENCE_BONUS = _env_float("CLUSTER_HIGH_CONFIDENCE_BONUS", 0.00
 # ─── LLM ─────────────────────────────────────────────────────────────
 LLM_MODEL = os.environ.get("LLM_MODEL", "gpt-4o-mini")
 LLM_TEMPERATURE = _env_float("LLM_TEMPERATURE", 0.2)
+# Timeout (s) e retries do cliente OpenAI; sem isso uma chamada pendurada trava o worker.
+LLM_TIMEOUT_SECONDS = _env_float("LLM_TIMEOUT_SECONDS", 30.0)
+LLM_MAX_RETRIES = _env_int("LLM_MAX_RETRIES", 2)
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    return os.environ.get(name, str(default)).strip().lower() in {"1", "true", "yes", "on"}
+
+
+# ─── Observabilidade (Langfuse) ──────────────────────────────────────
+# O SDK lê LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY / LANGFUSE_BASE_URL do ambiente.
+# Sem as chaves, o tracing vira no-op e o pipeline funciona normalmente.
+LANGFUSE_ENABLED = _env_bool("LANGFUSE_ENABLED", True)
+# false → traces guardam só tamanho/metadados, nunca o texto do usuário (LGPD).
+LANGFUSE_CAPTURE_CONTENT = _env_bool("LANGFUSE_CAPTURE_CONTENT", True)
+
+# ─── Safety Guardrails ───────────────────────────────────────────────
+SAFE_REFUSAL_MESSAGE = "Desculpe, mas não posso processar esta solicitação porque ela viola nossas diretrizes de segurança e moderação."
+SAFE_INJECTION_REFUSAL_MESSAGE = "Detectamos uma tentativa de contornar as instruções do sistema. Por favor, envie a alegação que deseja verificar."
+
+# ─── Deep Search / Fallback Prompts ───────────────────────────────────
+DEEP_SEARCH_SYSTEM_PROMPT = """\
+Você é um assistente de pesquisa web neutro. 
+O sistema de checagem oficial não encontrou laudos conclusivos para a alegação do usuário.
+Sua tarefa é resumir as informações encontradas na internet sobre o assunto.
+
+REGRAS CRÍTICAS:
+1. NÃO diga se a alegação é "Fato" ou "Fake". Você não tem um laudo oficial para isso.
+2. Use frases como: "Encontramos menções a...", "Alguns sites relatam que...", "Não há consenso claro, mas...".
+3. Apresente os pontos principais encontrados nos resultados da busca.
+4. FINALIZE SEMPRE com um aviso de pensamento crítico: 
+   "Atenção: Não encontramos checagens oficiais para este caso. Recomendamos cautela e que você verifique a credibilidade das fontes citadas antes de acreditar ou compartilhar."
+5. Mantenha um tom informativo, neutro e cauteloso.
+"""
+
+DEEP_SEARCH_USER_PROMPT = """\
+ALEGAÇÃO: {query}
+
+RESULTADOS DA BUSCA WEB:
+{web_results}
+
+TAREFA: Com base nos resultados acima, forneça um resumo informativo e neutro. Lembre-se de não dar um veredito final.
+"""
+PROMPT_LABEL = os.environ.get("PROMPT_LABEL", "production")

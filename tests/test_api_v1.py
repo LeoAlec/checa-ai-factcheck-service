@@ -31,7 +31,7 @@ def fake_service(monkeypatch):
         return result.copy()
 
     service.verify_claim_for_backend = verify
-    service.verify_claim = lambda text: {
+    service.verify_claim = lambda text, *, session_id=None: {
         "status": "abstained", "score": 0.1, "evidence": None,
         "sources": [], "counter_narrative": "Sem checagem.",
     }
@@ -64,12 +64,33 @@ async def test_invalid_inputs_return_422(client, fake_service):
 async def test_versioned_results_serialize_exactly(client, fake_service):
     _, result = fake_service
     assert (await client.post("/api/v1/verify", json={"text": "x"})).json() == result
+    result.update(verdict="deep_searched", similarity_score=0.1,
+                  counter_narrative="Pesquisa web cautelosa.", sources=[])
+    response = await client.post("/api/v1/verify", json={"text": "x"})
+    assert response.status_code == 200
+    assert response.json() == result
+    assert response.json()["sources"] == []
+    result.update(verdict="blocked", similarity_score=None,
+                  counter_narrative="Solicitação bloqueada.")
+    response = await client.post("/api/v1/verify", json={"text": "x"})
+    assert response.status_code == 200
+    assert response.json() == result
+    assert response.json()["similarity_score"] is None
     result.update(
         verdict="matched", similarity_score=0.8,
         counter_narrative="Fato checado [1].",
         sources=[{"title": "Título", "domain": "example.org", "url": "https://example.org/a"}],
     )
     assert (await client.post("/api/v1/verify", json={"text": "x"})).json() == result
+
+
+def test_openapi_verification_schema_has_four_verdicts_and_nullable_score():
+    schema = app.openapi()["components"]["schemas"]["VerifyResponse"]
+    assert set(schema["properties"]["verdict"]["enum"]) == {
+        "matched", "deep_searched", "insufficient_evidence", "blocked"
+    }
+    score = schema["properties"]["similarity_score"]
+    assert {item["type"] for item in score["anyOf"]} == {"number", "null"}
 
 
 @pytest.mark.asyncio
@@ -101,7 +122,7 @@ async def test_readiness_requires_generation_key(client, fake_service, monkeypat
 async def test_legacy_route_shape_is_preserved(client, fake_service):
     response = await client.post("/api/debunk", json={"message": "alegação longa"})
     assert response.status_code == 200
-    assert set(response.json()) == {"status", "score", "evidence", "sources", "counter_narrative"}
+    assert set(response.json()) == {"status", "score", "evidence", "sources", "counter_narrative", "trace_id"}
 
 
 @pytest.mark.asyncio
