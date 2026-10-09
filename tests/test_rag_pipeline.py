@@ -141,6 +141,46 @@ def test_v1_matched_returns_only_cited_sources(service):
     assert [source["url"] for source in result["sources"]] == ["https://g1.globo.com/b"]
 
 
+def test_v1_accepts_structured_numeric_source_reference(service):
+    service.hits = [hit("a", 0.90)]
+    service._call_llm = lambda system, user: json.dumps({
+        "laudos_tratam_alegacao": True,
+        "texto": "O laudo esclarece a alegação [1].",
+        "fontes_usadas": ["1"],
+    })
+
+    result = service.verify_claim_for_backend("alegação curta")
+
+    assert result["verdict"] == "matched"
+    assert result["sources"] == [{
+        "title": "Título a", "domain": "g1.globo.com", "url": "https://g1.globo.com/a"
+    }]
+
+
+def test_v1_rejects_structured_source_without_citation(service):
+    service.hits = [hit("a", 0.90), hit("b", 0.85)]
+    service._call_llm = lambda system, user: json.dumps({
+        "laudos_tratam_alegacao": True,
+        "texto": "O primeiro laudo esclarece [1].",
+        "fontes_usadas": ["2"],
+    })
+
+    with pytest.raises(fcs.VerificationGenerationError, match="fonte"):
+        service.verify_claim_for_backend("alegação curta")
+
+
+def test_v1_rejects_structured_invented_source_url(service):
+    service.hits = [hit("a", 0.90)]
+    service._call_llm = lambda system, user: json.dumps({
+        "laudos_tratam_alegacao": True,
+        "texto": "O laudo esclarece a alegação [1].",
+        "fontes_usadas": ["https://invented.example/falso"],
+    })
+
+    with pytest.raises(fcs.VerificationGenerationError, match="URL"):
+        service.verify_claim_for_backend("alegação curta")
+
+
 def test_v1_normalizes_citation_with_chunk_reference(service):
     service.hits = [hit("a", 0.90, idx=0), hit("a", 0.88, idx=1), hit("a", 0.85, idx=2)]
     service._call_llm = lambda system, user: "O laudo esclarece a alegação [1, trecho 3]."

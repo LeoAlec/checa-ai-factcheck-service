@@ -598,7 +598,17 @@ class FactCheckService:
             citation_numbers[number] = source_numbers[ev.url]
         allowed_urls = seen_urls
         narrative_urls = {url.rstrip(".,;:!?") for url in _URL_PATTERN.findall(narrative)}
-        if narrative_urls - allowed_urls or set(answer.fontes_usadas) - allowed_urls:
+        reported_urls: set[str] = set()
+        for reference in answer.fontes_usadas:
+            numbered = _CITATION_PATTERN.fullmatch(reference)
+            if numbered or reference.isdecimal():
+                number = int(numbered.group(1) if numbered else reference)
+                if number not in citation_numbers:
+                    raise VerificationGenerationError("fonte sem citação recuperada")
+                reported_urls.add(used[number - 1].url)
+            else:
+                reported_urls.add(reference)
+        if narrative_urls - allowed_urls or reported_urls - allowed_urls:
             raise VerificationGenerationError("URL sem fonte recuperada")
         narrative = _CITATION_PATTERN.sub(
             lambda match: f"[{citation_numbers[int(match.group(1))]}]", narrative
