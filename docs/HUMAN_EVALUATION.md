@@ -7,10 +7,23 @@ conclusão, abstenção e URLs citadas.
 
 ## Protocolo
 
-1. Copie `data/evaluation/human_review_cases.template.jsonl` para um arquivo local
-   não versionado e substitua os exemplos por pelo menos 20 casos representativos.
-   Inclua alegações sustentadas, contraditas, vagas, links isolados, evidência
-   semanticamente parecida mas sobre outro fato e falhas de fonte.
+1. Para os casos locais favoráveis, gere rascunhos a partir da coleção existente.
+   Esta etapa apenas lê pontos; não indexa, recria ou altera a coleção:
+
+   ```powershell
+   python scripts/build_human_evaluation_candidates.py `
+     --qdrant-path "C:\Users\leozi\OneDrive\Área de Trabalho\projetos\checa-ai-ml\data\qdrant_db" `
+     --allow-local-reference-index `
+     --collection fact_checks_pt_v2_openai `
+     --limit 10 `
+     --output data/evaluation/candidatos_locais.jsonl
+   ```
+
+   Abra `data/evaluation/candidatos_locais.jsonl`, mantenha quatro casos com
+   alegação factual clara e copie-os para um arquivo local não versionado, por
+   exemplo `data/evaluation/minha_amostra.jsonl`. Em seguida acrescente casos
+   contraditos, vagos, URLs isoladas, evidência semanticamente parecida mas sobre
+   outro fato e falhas de fonte, até alcançar pelo menos 20 casos.
 2. Com o serviço e os serviços reais configurados, capture as respostas:
 
    ```powershell
