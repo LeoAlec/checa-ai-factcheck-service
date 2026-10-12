@@ -1,5 +1,6 @@
 import sys
 import types
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -43,9 +44,30 @@ def service(monkeypatch):
 
     def fake_llm(system, user):
         svc.prompts.append((system, user))
-        return "Contranarrativa gerada."
+        return json.dumps(
+            {
+                "conclusion": "sustentada",
+                "evidence_sufficient": True,
+                "evidence_level": "forte",
+                "explanation": "A evidência resolve a alegação [1].",
+                "source_urls": [],
+            }
+        )
 
     monkeypatch.setattr(svc, "_call_llm", fake_llm, raising=False)
+    monkeypatch.setattr(
+        svc,
+        "_call_claim_analyzer",
+        lambda system, user: json.dumps(
+            {
+                "has_verifiable_claim": True,
+                "claim": "alegacao qualquer",
+                "missing_context": [],
+                "explanation": "Alegacao verificavel.",
+            }
+        ),
+        raising=False,
+    )
     return svc
 
 
@@ -68,9 +90,7 @@ def test_matched_uses_multiple_documents_and_returns_sources(service):
     r = service.verify_claim("alegação qualquer")
 
     assert r["status"] == "matched" and r["score"] == 0.9
-    assert [s["url"] for s in r["sources"]] == [
-        "https://g1.globo.com/a", "https://g1.globo.com/b", "https://g1.globo.com/c",
-    ]
+    assert [s["url"] for s in r["sources"]] == ["https://g1.globo.com/a"]
     assert r["evidence"]["url"] == "https://g1.globo.com/a"
     user_prompt = service.prompts[0][1]
     assert "[1]" in user_prompt and "[2]" in user_prompt and "[3]" in user_prompt
@@ -105,8 +125,5 @@ def test_cluster_rerank_changes_source_order_without_changing_best_similarity(se
 
     assert r["status"] == "matched"
     assert r["score"] == 0.81
-    assert [s["url"] for s in r["sources"]] == [
-        "https://g1.globo.com/approved",
-        "https://g1.globo.com/pending",
-    ]
+    assert [s["url"] for s in r["sources"]] == ["https://g1.globo.com/approved"]
     assert r["sources"][0]["cluster_review_status"] == "approved"

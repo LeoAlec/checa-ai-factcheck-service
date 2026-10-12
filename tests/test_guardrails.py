@@ -18,16 +18,32 @@ ALLOWED = [("https://g1.globo.com/a", "g1.globo.com")]
 def test_parse_structured_json():
     ans, structured = parse_answer(json.dumps({"texto": "Olá [1]", "fontes_usadas": ["https://x.com/a."]}))
     assert structured and ans.texto == "Olá [1]"
+    assert ans.conclusion.value == "inconclusiva"
 
 
 def test_parse_falls_back_to_plain_text_and_extracts_urls():
     ans, structured = parse_answer("Texto https://x.com/a.")
-    assert not structured and ans.fontes_usadas == ["https://x.com/a"]
+    assert not structured
+    assert ans.conclusion.value == "inconclusiva"
+    assert ans.evidence_sufficient is False
+    assert ans.fontes_usadas == []
 
 
 def test_parse_rejects_wrong_schema_without_crashing():
     ans, structured = parse_answer('{"resposta": "x"}')
-    assert not structured and ans.texto == '{"resposta": "x"}'
+    assert not structured
+    assert ans.conclusion.value == "inconclusiva"
+
+
+def test_invalid_json_can_never_produce_a_contradicted_conclusion():
+    ans, structured = parse_answer(
+        '{"conclusion":"contradita", "evidence_sufficient": true'
+    )
+
+    assert not structured
+    assert ans.conclusion.value == "inconclusiva"
+    assert ans.evidence_sufficient is False
+    assert ans.fontes_usadas == []
 
 
 def test_invented_url_removed_and_real_source_credited():
@@ -72,7 +88,21 @@ def service(monkeypatch):
     svc = object.__new__(fcs.FactCheckService)
     svc.hits, svc.prompts = [], []
     monkeypatch.setattr(svc, "_search", lambda q, limit: svc.hits, raising=False)
-    monkeypatch.setattr(svc, "_call_llm", lambda s, u: svc.prompts.append(u) or "Texto.", raising=False)
+    monkeypatch.setattr(
+        svc,
+        "_call_llm",
+        lambda s, u: svc.prompts.append(u)
+        or json.dumps(
+            {
+                "conclusion": "sustentada",
+                "evidence_sufficient": True,
+                "evidence_level": "forte",
+                "explanation": "A evidência resolve a alegação [1].",
+                "source_urls": [],
+            }
+        ),
+        raising=False,
+    )
     return svc
 
 
@@ -93,11 +123,11 @@ def test_payload_risk_from_ingestion_is_honored(service):
 
 def test_service_sanitizes_llm_output(service, monkeypatch):
     service.hits = [_hit("a", "Laudo.")]
-    bad = json.dumps({"texto": "Veja https://fake.example/x", "fontes_usadas": ["https://fake.example/x"]})
+    bad = '{"conclusion":"contradita", "evidence_sufficient": true'
     monkeypatch.setattr(service, "_call_llm", lambda s, u: bad, raising=False)
     r = service.verify_claim("boato")
-    assert "fake.example" not in r["counter_narrative"]
-    assert r["guardrails"]["ungrounded_urls"] == ["https://fake.example/x"]
+    assert r["conclusion"] == "inconclusiva"
+    assert r["sources"] == []
 
 
 def test_model_abstention_when_laudos_do_not_cover_claim(service, monkeypatch):
