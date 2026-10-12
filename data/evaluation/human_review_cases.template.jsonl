@@ -1,0 +1,4 @@
+{"case_id":"local-support-001","input":"Substitua por uma alegação conhecida e sustentada pela coleção de validação.","expected":"sustentada"}
+{"case_id":"web-contradiction-001","input":"Substitua por uma alegação conhecida que exija fallback web e seja contradita.","expected":"contradita"}
+{"case_id":"missing-context-001","input":"Isso é verdade?","expected":"inconclusiva"}
+{"case_id":"standalone-url-001","input":"Substitua por uma URL pública verificável.","expected":"claim_extracted"}
