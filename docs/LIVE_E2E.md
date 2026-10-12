@@ -4,6 +4,10 @@ O smoke real usa OpenAI para moderação, embeddings, extração da alegação e
 Qdrant via HTTP para recuperação local; e Tavily para fallback web. Ele nunca deve
 ser executado com credenciais em linha de comando ou versionadas no Git.
 
+O Compose usa Qdrant `v1.13.4` e as dependências fixam `qdrant-client==1.13.3`,
+a versão de cliente publicada compatível com essa linha do servidor.
+Mantenha essas versões alinhadas antes de executar o smoke.
+
 ## Configuração
 
 1. Crie o ambiente e instale as dependências:

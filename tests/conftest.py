@@ -5,6 +5,7 @@ import json
 # habilitado preserva a configuração do ambiente para validar tracing opcional.
 if not os.environ.get("RUN_E2E"):
     os.environ["LANGFUSE_ENABLED"] = "false"
+    os.environ["LANGFUSE_CAPTURE_CONTENT"] = "true"
 
 import pytest
 
