@@ -1,0 +1,116 @@
+name: Deploy → Azure VM
+
+# Roda quando o CI da main termina com sucesso (tests + eval), ou manualmente.
+# 1) build da imagem e push no GHCR  2) SSH na VM: atualiza código/.env, pull + up -d
+# 3) smoke test em /health.
+# Rollback: Actions → "Deploy" → Run workflow informando um SHA antigo em `ref`.
+# Prompt: o deploy NÃO promove o prompt; isso continua sendo o workflow "Release".
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "SHA/branch a implantar (default: main)"
+        required: false
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  deploy:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    env:
+      REF: ${{ inputs.ref || github.event.workflow_run.head_sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.REF }}
+
+      - name: Define tag da imagem
+        run: |
+          echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}:$(git rev-parse --short=12 HEAD)" >> "$GITHUB_ENV"
+
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ env.IMAGE }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Prepara SSH
+        env:
+          SSH_KEY: ${{ secrets.AZURE_VM_SSH_KEY }}
+          HOST: ${{ secrets.AZURE_VM_HOST }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts
+
+      - name: Atualiza código e .env na VM e sobe a nova versão
+        env:
+          HOST: ${{ secrets.AZURE_VM_HOST }}
+          VM_USER: ${{ secrets.AZURE_VM_USER }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+          LANGFUSE_BASE_URL: ${{ vars.LANGFUSE_BASE_URL || 'https://cloud.langfuse.com' }}
+          LANGFUSE_TRACING_ENVIRONMENT: ${{ vars.LANGFUSE_TRACING_ENVIRONMENT || 'production' }}
+          PROMPT_LABEL: ${{ vars.PROMPT_LABEL || 'production' }}
+          LLM_MODEL: ${{ vars.LLM_MODEL }}
+          DOMAIN: ${{ vars.DOMAIN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_ACTOR: ${{ github.actor }}
+          REPO_URL: https://github.com/${{ github.repository }}.git
+        run: |
+          SSH="ssh -i ~/.ssh/id_deploy $VM_USER@$HOST"
+          AUTH=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+
+          # .env montado a partir dos secrets/variables (nunca fica no repositório).
+          # Variáveis vazias são omitidas, para o app usar o default do código.
+          for k in OPENAI_API_KEY TAVILY_API_KEY LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY \
+                   LANGFUSE_BASE_URL LANGFUSE_TRACING_ENVIRONMENT PROMPT_LABEL LLM_MODEL DOMAIN; do
+            [ -n "${!k}" ] && printf '%s=%s\n' "$k" "${!k}"
+          done | $SSH 'umask 077; mkdir -p ~/checa-ai && cat > ~/checa-ai/.env'
+
+          # Código: na primeira vez inicializa o git; depois só busca o SHA. O token não é gravado em .git/config.
+          $SSH "set -e; cd ~/checa-ai
+            [ -d .git ] || { git init -q && git remote add origin $REPO_URL; }
+            git -c http.extraheader='AUTHORIZATION: basic $AUTH' fetch --depth 1 origin $(git rev-parse HEAD)
+            git checkout -qf FETCH_HEAD"
+
+          # Login no GHCR (o token só vale durante o job; basta para o pull imediato).
+          echo "$GH_TOKEN" | $SSH "docker login ghcr.io -u $GH_ACTOR --password-stdin"
+
+          $SSH "cd ~/checa-ai && echo 'APP_IMAGE=$IMAGE' > .image.env \
+            && docker compose -f compose.prod.yaml --env-file .env --env-file .image.env pull app \
+            && docker compose -f compose.prod.yaml --env-file .env --env-file .image.env up -d --remove-orphans \
+            && docker image prune -f"
+
+      - name: Smoke test
+        env:
+          URL: ${{ vars.APP_URL || format('http://{0}', secrets.AZURE_VM_HOST) }}
+        run: |
+          for i in $(seq 1 12); do
+            curl -fsS "$URL/health" && exit 0
+            sleep 10
+          done
+          echo "::error::/health não respondeu após o deploy"; exit 1
