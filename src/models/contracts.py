@@ -120,8 +120,16 @@ class FactCheckResponse(BaseModel):
     trace_id: str | None = None
 
     @model_validator(mode="after")
-    def enforce_inconclusive_contract(self) -> "FactCheckResponse":
-        if self.conclusion is EvidenceConclusion.INCONCLUSIVE:
+    def enforce_evidence_contract(self) -> "FactCheckResponse":
+        # A verdict is only meaningful when the response retains the evidence
+        # that grounded it.  Never let a caller surface a positive/negative
+        # conclusion after sources or sufficiency have been lost downstream.
+        if (
+            self.conclusion is EvidenceConclusion.INCONCLUSIVE
+            or not self.evidence_sufficient
+            or not self.sources
+        ):
+            self.conclusion = EvidenceConclusion.INCONCLUSIVE
             self.evidence_sufficient = False
         if not self.sources:
             self.evidence_sufficient = False
@@ -145,7 +153,17 @@ class LLMDecision(BaseModel):
         return list(dict.fromkeys(validate_http_url(value) for value in values))
 
     @model_validator(mode="after")
-    def inconclusive_is_never_sufficient(self) -> "LLMDecision":
-        if self.conclusion is EvidenceConclusion.INCONCLUSIVE:
+    def enforce_evidence_contract(self) -> "LLMDecision":
+        # A structured payload is still untrusted model output.  A model may
+        # not reach a verdict without declaring sufficient evidence and citing
+        # at least one of the retrieved URLs.
+        if (
+            self.conclusion is EvidenceConclusion.INCONCLUSIVE
+            or not self.evidence_sufficient
+            or not self.source_urls
+        ):
+            self.conclusion = EvidenceConclusion.INCONCLUSIVE
             self.evidence_sufficient = False
+            if not self.source_urls:
+                self.evidence_level = EvidenceLevel.NONE
         return self

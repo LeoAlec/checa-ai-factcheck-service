@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Generator
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -54,14 +56,14 @@ def _required_environment() -> None:
     assert not missing, "variáveis obrigatórias ausentes: " + ", ".join(missing)
 
 
-def _vector_size(collection_info) -> int:
+def _vector_size(collection_info: Any) -> int:
     vectors = collection_info.config.params.vectors
     assert not isinstance(vectors, dict), "o smoke E2E requer uma coleção com vetor sem nome"
     return int(vectors.size)
 
 
 @pytest.fixture(scope="module")
-def live_client():
+def live_client() -> Generator[TestClient, None, None]:
     _required_environment()
     qdrant_url = os.environ["QDRANT_URL"].strip()
     assert qdrant_url.startswith(("http://", "https://")), (

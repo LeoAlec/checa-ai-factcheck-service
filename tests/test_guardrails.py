@@ -10,6 +10,7 @@ sys.modules.setdefault("qdrant_client", _qc)
 import pytest  # noqa: E402
 
 from src import fact_check_service as fcs  # noqa: E402
+from src.models import FactCheckResponse
 from src.rag.guardrails import enforce_grounding, parse_answer  # noqa: E402
 
 ALLOWED = [("https://g1.globo.com/a", "g1.globo.com")]
@@ -44,6 +45,57 @@ def test_invalid_json_can_never_produce_a_contradicted_conclusion():
     assert ans.conclusion.value == "inconclusiva"
     assert ans.evidence_sufficient is False
     assert ans.fontes_usadas == []
+
+
+@pytest.mark.parametrize(
+    ("payload", "reason"),
+    [
+        (
+            {
+                "conclusion": "contradita",
+                "evidence_sufficient": False,
+                "evidence_level": "limitada",
+                "explanation": "A fonte não basta para refutar a alegação.",
+                "source_urls": ["https://g1.globo.com/a"],
+            },
+            "evidência insuficiente",
+        ),
+        (
+            {
+                "conclusion": "contradita",
+                "evidence_sufficient": True,
+                "evidence_level": "forte",
+                "explanation": "A resposta não cita fonte utilizável.",
+                "source_urls": [],
+            },
+            "sem fonte",
+        ),
+    ],
+)
+def test_structured_verdict_without_sufficient_cited_evidence_is_inconclusive(payload, reason):
+    ans, structured = parse_answer(json.dumps(payload))
+
+    assert structured, reason
+    assert ans.conclusion.value == "inconclusiva"
+    assert ans.evidence_sufficient is False
+
+
+def test_public_response_without_sources_cannot_keep_a_contradicted_conclusion():
+    response = FactCheckResponse.model_validate(
+        {
+            "status": "matched",
+            "claim": "A alegação não tem fonte usada.",
+            "conclusion": "contradita",
+            "evidence_sufficient": True,
+            "evidence_level": "forte",
+            "explanation": "Não há referências retidas para conferir esta conclusão.",
+            "sources": [],
+        }
+    )
+
+    assert response.conclusion.value == "inconclusiva"
+    assert response.evidence_sufficient is False
+    assert response.evidence_level.value == "ausente"
 
 
 def test_invented_url_removed_and_real_source_credited():

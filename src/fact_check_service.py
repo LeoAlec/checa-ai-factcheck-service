@@ -49,6 +49,7 @@ from src.rag.prompts import (
     CLAIM_ANALYSIS_SYSTEM_PROMPT,
     CLAIM_ANALYSIS_USER_PROMPT,
     PROMPT_VERSION,
+    PromptBundle,
     current_prompt,
     load_prompt,
 )
@@ -135,7 +136,7 @@ class FactCheckService:
     """Orchestrates safety, local retrieval, web fallback and grounded synthesis."""
 
     _instance: "FactCheckService | None" = None
-    _llm_client = None
+    _llm_client: Any | None = None
 
     def __init__(self) -> None:
         from src.rag.qdrant import get_qdrant_client
@@ -164,7 +165,7 @@ class FactCheckService:
             )
         return vector
 
-    def _search(self, query: str, limit: int):
+    def _search(self, query: str, limit: int) -> list[Any]:
         return self._qdrant.query_points(
             collection_name=COLLECTION_NAME,
             query=self._embed(query),
@@ -217,7 +218,7 @@ class FactCheckService:
             )
         return selected
 
-    def _get_llm_client(self):
+    def _get_llm_client(self) -> Any:
         if self._llm_client is None:
             import openai
 
@@ -375,7 +376,7 @@ class FactCheckService:
         self,
         query: str,
         sources: list[EvidenceSource],
-        prompt,
+        prompt: PromptBundle,
         *,
         use_web_seam: bool = False,
     ) -> tuple[dict[str, Any], bool]:
@@ -421,7 +422,7 @@ class FactCheckService:
         query: str,
         score: float,
         abstention_evidences: list[Evidence],
-        prompt=None,
+        prompt: PromptBundle | None = None,
         *,
         web_sources: list[EvidenceSource] | None = None,
         abstention_explanation: str = _ABSTENTION_MESSAGE,
@@ -477,7 +478,12 @@ class FactCheckService:
         finally:
             current_prompt.reset(token)
 
-    def _verify_traced(self, user_message: str, session_id: str | None, prompt) -> dict[str, Any]:
+    def _verify_traced(
+        self,
+        user_message: str,
+        session_id: str | None,
+        prompt: PromptBundle,
+    ) -> dict[str, Any]:
         with observability.request_trace(
             "verify-claim",
             input=user_message,
@@ -508,7 +514,7 @@ class FactCheckService:
             )
         return result
 
-    def _verify(self, user_message: str, prompt) -> dict[str, Any]:
+    def _verify(self, user_message: str, prompt: PromptBundle) -> dict[str, Any]:
         moderation = check_moderation(user_message)
         if not moderation.is_safe:
             logger.warning("Entrada bloqueada por moderação: %s", moderation.category)

@@ -25,7 +25,7 @@ class ClassifierAdapter(Protocol):
 class TfidfAdapter:
     model_name = "tfidf"
 
-    def __init__(self, path: str | Path, model_version: str):
+    def __init__(self, path: str | Path, model_version: str) -> None:
         self.path = Path(path)
         _register_legacy_preprocessor()
         try:
@@ -80,7 +80,7 @@ class BertimbauAdapter:
         *,
         device: str = "cpu",
         batch_size: int = 16,
-    ):
+    ) -> None:
         self.path = Path(path)
         if not (self.path / "config.json").is_file():
             raise FileNotFoundError(f"config.json ausente em {self.path}")
