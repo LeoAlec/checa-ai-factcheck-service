@@ -27,6 +27,7 @@ share/python-wheels/
 
 # Virtual Environments
 .venv/
+.venv-classifier-evaluation/
 venv/
 ENV/
 env/
@@ -43,6 +44,8 @@ models/*.h5
 models/*.joblib
 models/*.pt
 models/*.onnx
+models/*
+!models/.gitkeep
 
 # Exploration temporária
 exploration/
@@ -56,3 +59,9 @@ Thumbs.db
 # Environment variables
 .env
 reports/
+
+# External classifier evaluation (weights, curated data and generated output)
+artifacts/
+classifier-artifacts/
+data/evaluation/*
+!data/evaluation/external_messages_template.csv
