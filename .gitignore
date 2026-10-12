@@ -65,3 +65,4 @@ artifacts/
 classifier-artifacts/
 data/evaluation/*
 !data/evaluation/external_messages_template.csv
+data/embedding_cache/
