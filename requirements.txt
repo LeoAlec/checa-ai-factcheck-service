@@ -16,7 +16,7 @@ uvicorn
 pydantic
 # RAG pipeline:
 sentence-transformers
-qdrant-client
+qdrant-client==1.13.3
 openai
 langfuse>=4,<5   # LLMOps: tracing, tokens, custo, latência, feedback
 python-dotenv

@@ -4,10 +4,9 @@ app.py — Checa-AI FastAPI Application
 Servidor principal. Expõe:
   GET  /            → página home (redireciona para /debunk)
   GET  /debunk      → interface de verificação de boatos
-  POST /api/debunk  → endpoint JSON do pipeline RAG
+  POST /api/debunk  → conclusão evidencial JSON grounded
 
-Inicialização do FactCheckService é feita no lifespan do FastAPI,
-garantindo que o modelo seja carregado UMA ÚNICA VEZ, no startup.
+O FactCheckService é singleton e inicializado sob demanda na primeira verificação.
 
 Uso:
     ./.venv/bin/uvicorn app:app --reload --port 8000
@@ -19,6 +18,7 @@ import logging
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Literal
 
 try:
     from dotenv import load_dotenv
@@ -31,12 +31,12 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
-from typing import Literal
 
 # Garante que src/ está no path quando rodando da raiz do projeto
 sys.path.insert(0, str(Path(__file__).parent))
 from src import observability
 from src.fact_check_service import FactCheckService
+from src.models import ClaimRequest, FactCheckResponse
 
 log = logging.getLogger("checa-ai")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(levelname)-8s %(message)s")
@@ -45,15 +45,12 @@ BASE_DIR   = Path(__file__).parent
 TEMPLATES  = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 
-# ─── Lifespan: carrega modelos pesados UMA VEZ no startup ─────────────
+# ─── Lifespan ─────────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    log.info("🚀 Checa-AI startup — carregando FactCheckService…")
-    try:
-        FactCheckService.get_instance()
-        log.info("✅ FactCheckService pronto.")
-    except Exception as exc:
-        log.error("❌ Falha ao inicializar FactCheckService: %s", exc)
+    # O serviço é inicializado na primeira verificação. Assim, healthchecks e
+    # feedback continuam disponíveis mesmo se Qdrant/embeddings estiverem fora.
+    log.info("Checa-AI startup — inicialização do pipeline sob demanda.")
     yield
     observability.shutdown()  # envia traces pendentes ao Langfuse
     log.info("🛑 Checa-AI shutdown.")
@@ -62,8 +59,8 @@ async def lifespan(app: FastAPI):
 # ─── App ──────────────────────────────────────────────────────────────
 app = FastAPI(
     title="Checa-AI",
-    description="Pipeline RAG para verificação de fatos e geração de contranarrativas",
-    version="0.1.0",
+    description="Serviço independente de verificação de alegações baseada em evidências",
+    version="1.0.0",
     lifespan=lifespan,
 )
 
@@ -71,48 +68,10 @@ app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="stat
 
 
 # ─── Schemas ──────────────────────────────────────────────────────────
-class DebunkRequest(BaseModel):
-    message: str = Field(..., min_length=10, description="Texto suspeito a ser verificado")
-    session_id: str | None = Field(
-        default=None, max_length=64, pattern=r"^[A-Za-z0-9_-]+$",
-        description="Agrupa requisições do mesmo visitante no Langfuse",
-    )
-
-
 class FeedbackRequest(BaseModel):
-    trace_id: str = Field(..., pattern=r"^[0-9a-f]{32}$")
+    trace_id: str = Field(pattern=r"^[0-9a-f]{32}$")
     value: Literal["up", "down"]
     comment: str | None = Field(default=None, max_length=500)
-
-
-class EvidenceOut(BaseModel):
-    titulo: str
-    dominio: str
-    url: str
-    data_publicacao: str | None
-
-
-class SourceOut(BaseModel):
-    title: str
-    domain: str
-    url: str
-    published_at: str | None
-    score: float
-    rerank_score: float | None = None
-    cluster_id: int | None = None
-    cluster_label: str = ""
-    cluster_type: str = ""
-    cluster_confidence: str = ""
-    cluster_review_status: str = ""
-
-
-class DebunkResponse(BaseModel):
-    status: str           # "matched" | "abstained" | "deep_searched" | "blocked"
-    score: float | None   # None quando a entrada é bloqueada antes da busca
-    evidence: EvidenceOut | None
-    sources: list[SourceOut] = []
-    counter_narrative: str
-    trace_id: str | None = None   # usado pelo frontend para enviar feedback
 
 
 # ─── Rotas ────────────────────────────────────────────────────────────
@@ -130,14 +89,11 @@ async def debunk_page(request: Request):
     )
 
 
-@app.post("/api/debunk", response_model=DebunkResponse)
-def api_debunk(body: DebunkRequest):  # def (não async): roda em threadpool, sem bloquear o loop
+@app.post("/api/debunk")
+def api_debunk(body: ClaimRequest) -> FactCheckResponse:
     """
-    Recebe uma mensagem suspeita e retorna:
-    - status: matched (contranarrativa gerada) ou abstained (sem checagem)
-    - score: similaridade com a checagem mais próxima
-    - evidence: metadados da checagem recuperada
-    - counter_narrative: texto da contranarrativa ou mensagem de abstinência
+    Retorna status operacional e conclusão evidencial separados, além da
+    suficiência, nível, explicação e fontes efetivamente usadas.
     """
     try:
         service = FactCheckService.get_instance()
@@ -149,28 +105,11 @@ def api_debunk(body: DebunkRequest):  # def (não async): roda em threadpool, se
         log.exception("Erro inesperado em /api/debunk: %s", exc)
         raise HTTPException(status_code=500, detail="Erro interno no servidor.")
 
-    evidence_out = None
-    if result.get("evidence"):
-        ev = result["evidence"]
-        evidence_out = EvidenceOut(
-            titulo=ev.get("titulo", ""),
-            dominio=ev.get("dominio", ""),
-            url=ev.get("url", ""),
-            data_publicacao=ev.get("data_publicacao"),
-        )
-
-    return DebunkResponse(
-        status=result["status"],
-        score=result["score"],
-        evidence=evidence_out,
-        sources=[SourceOut(**s) for s in result.get("sources", [])],
-        counter_narrative=result["counter_narrative"],
-        trace_id=result.get("trace_id"),
-    )
+    return FactCheckResponse.model_validate(result)
 
 
 @app.post("/api/feedback", status_code=202)
-def api_feedback(body: FeedbackRequest):
+async def api_feedback(body: FeedbackRequest):
     """Registra 👍/👎 do usuário como score `user_feedback` no trace da resposta."""
     recorded = observability.score_trace(
         body.trace_id,

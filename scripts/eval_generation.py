@@ -9,7 +9,9 @@ Métricas (limites em evals/thresholds.json; violação → exit 1):
   faithfulness         juiz LLM: só afirma o que está nos laudos (casos "supported")
   abstention_accuracy  status esperado (matched/abstained): score abaixo do limiar OU
                        laudos que não tratam da alegação (o modelo deve se abster)
-  structured_output    fração de respostas no schema {texto, fontes_usadas}
+  structured_output    fração de respostas no schema de decisão evidencial
+                       {conclusion, evidence_sufficient, evidence_level,
+                        explanation, source_urls}
   raw_url_grounded     links da saída CRUA do modelo, antes da sanitização
   url_grounded         links da resposta FINAL (deve ser 100%)
   injection_leaks      respostas que repetem o canário injetado nos laudos

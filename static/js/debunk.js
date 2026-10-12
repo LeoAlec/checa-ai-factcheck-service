@@ -59,50 +59,34 @@ function renderResult(data) {
   const area = document.getElementById('result-area');
   area.classList.remove('hidden');
 
-  const isMatched   = data.status === 'matched';
-  const evidence    = data.evidence ?? {};
-  const scoreLabel  = data.score > 0 ? `Similaridade: ${(data.score * 100).toFixed(1)}%` : '';
-
-  const verdictIcon  = isMatched ? '✅' : '🔕';
-  const verdictLabel = isMatched ? 'Checagem Encontrada' : 'Abstinência';
-  const badgeClass   = isMatched ? 'matched' : 'abstained';
-
-  const sources = (data.sources && data.sources.length)
-    ? data.sources.map(s => ({
-        titulo: s.title, dominio: s.domain, url: s.url, data_publicacao: s.published_at,
-        cluster_label: s.cluster_label, cluster_review_status: s.cluster_review_status,
-        cluster_confidence: s.cluster_confidence, score: s.score, rerank_score: s.rerank_score,
-      }))
-    : ((evidence.titulo || evidence.url) ? [evidence] : []);
+  const conclusionLabels = {
+    sustentada: ['✅', 'Sustentada'],
+    contradita: ['❌', 'Contradita'],
+    inconclusiva: ['❔', 'Inconclusiva'],
+  };
+  const statusLabels = {
+    matched: 'Evidência local',
+    deep_searched: 'Busca externa realizada',
+    abstained: 'Sem evidência suficiente',
+    blocked: 'Processamento bloqueado',
+  };
+  const [verdictIcon, verdictLabel] = conclusionLabels[data.conclusion] ?? ['❔', 'Inconclusiva'];
+  const badgeClass = data.conclusion ?? 'inconclusiva';
+  const sources = data.sources ?? [];
 
   const evidenceBlock = sources.map((src, i) => `
       <div class="evidence-card">
-        <p class="section-title">📋 Checagem de referência${sources.length > 1 ? ` ${i + 1}` : ''}</p>
-        ${src.titulo
-          ? `<p class="evidence-title">${escHtml(src.titulo)}</p>`
-          : ''}
+        <p class="section-title">📋 Fonte ${i + 1}</p>
+        <p class="evidence-title">${escHtml(src.title)}</p>
         <div class="evidence-meta">
-          ${src.dominio
-            ? `<span>🏢 ${escHtml(src.dominio)}</span>`
-            : ''}
-          ${src.data_publicacao
-            ? `<span>📅 ${escHtml(src.data_publicacao)}</span>`
-            : ''}
-          ${src.cluster_label
-            ? `<span class="cluster-chip" title="Cluster usado no re-ranking">${escHtml(src.cluster_label)}</span>`
-            : ''}
-          ${src.cluster_review_status
-            ? `<span class="cluster-chip ${src.cluster_review_status === 'approved' ? 'approved' : 'pending'}">${escHtml(src.cluster_review_status)}</span>`
-            : ''}
+          <span>🏢 ${escHtml(src.domain)}</span>
+          <span class="origin-chip">${src.origin === 'local' ? 'Base local' : 'Web'}</span>
+          ${src.published_at ? `<span>📅 ${escHtml(src.published_at)}</span>` : ''}
         </div>
-        ${src.url
-          ? `<a class="source-link"
-                href="${escHtml(src.url)}"
-                target="_blank"
-                rel="noopener noreferrer">
-               🔗 Leia a checagem completa
-             </a>`
-          : ''}
+        <p class="evidence-excerpt">${escHtml(src.relevant_excerpt)}</p>
+        <a class="source-link" href="${escHtml(src.url)}" target="_blank" rel="noopener noreferrer">
+          🔗 Abrir fonte original
+        </a>
       </div>`).join('');
 
   area.innerHTML = `
@@ -111,13 +95,19 @@ function renderResult(data) {
         <span class="verdict-badge ${badgeClass}">
           ${verdictIcon} ${verdictLabel}
         </span>
-        ${scoreLabel
-          ? `<span class="score-badge">${scoreLabel}</span>`
-          : ''}
+        <span class="status-badge">${escHtml(statusLabels[data.status] ?? data.status)}</span>
       </div>
       <div class="result-body">
-        <p class="section-title">💬 Contranarrativa gerada</p>
-        <p class="counter-narrative">${escHtml(data.counter_narrative)}</p>
+        ${data.claim
+          ? `<p class="section-title">🎯 Alegação verificada</p>
+             <p class="identified-claim">${escHtml(data.claim)}</p>`
+          : ''}
+        <div class="evidence-summary">
+          <span><strong>Nível de evidência:</strong> ${escHtml(data.evidence_level)}</span>
+          <span><strong>Evidência suficiente:</strong> ${data.evidence_sufficient ? 'sim' : 'não'}</span>
+        </div>
+        <p class="section-title">💬 Explicação</p>
+        <p class="counter-narrative">${escHtml(data.explanation)}</p>
         ${evidenceBlock}
         ${data.trace_id
           ? `<div class="feedback" data-trace="${escHtml(data.trace_id)}">

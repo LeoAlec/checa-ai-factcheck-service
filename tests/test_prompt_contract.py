@@ -15,6 +15,17 @@ def test_prompt_text_change_requires_version_bump_and_lock_update():
     )
 
 
+def test_lock_hash_covers_claim_analysis_prompts(monkeypatch):
+    original_hash = prompts.content_hash()
+    monkeypatch.setattr(
+        prompts,
+        "CLAIM_ANALYSIS_SYSTEM_PROMPT",
+        prompts.CLAIM_ANALYSIS_SYSTEM_PROMPT + "\nMudança de teste.",
+    )
+
+    assert prompts.content_hash() != original_hash
+
+
 def test_user_prompt_has_required_variables():
     assert "{{query}}" in prompts.USER_PROMPT and "{{contexto}}" in prompts.USER_PROMPT
 
