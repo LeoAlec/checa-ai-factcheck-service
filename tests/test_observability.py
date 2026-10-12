@@ -76,7 +76,7 @@ def service(monkeypatch):
             "evidence_sufficient": True,
             "evidence_level": "forte",
             "explanation": "A evidência resolve a alegação [1].",
-            "source_urls": [],
+            "source_urls": ["https://g1.globo.com/a"],
         }
     )
     monkeypatch.setattr(svc, "_search", lambda q, limit: svc.hits, raising=False)
@@ -104,7 +104,7 @@ def test_matched_trace_carries_prompt_version_and_scores(lf, service):
             "evidence_sufficient": True,
             "evidence_level": "forte",
             "explanation": "Texto [1].",
-            "source_urls": [],
+            "source_urls": ["https://g1.globo.com/a"],
         }
     )
     r = service.verify_claim("alegação qualquer", session_id="sess-1")
@@ -130,7 +130,7 @@ def test_invented_url_fails_sources_grounded(lf, service):
             "evidence_sufficient": True,
             "evidence_level": "forte",
             "explanation": "Veja https://fake.example/inventado e [1].",
-            "source_urls": [],
+            "source_urls": ["https://g1.globo.com/a"],
         }
     )
     service.verify_claim("alegação qualquer")
@@ -287,7 +287,8 @@ def test_load_prompt_uses_langfuse_version_and_links_generation(lf, service):
             {"role": "user", "content": "Pergunta: {{query}} | {{contexto}}"},
         ],
     )
-    lf.get_prompt = lambda name, **kw: remote
+    fallback_claim = SimpleNamespace(version=3, is_fallback=True, prompt=[])
+    lf.get_prompt = lambda name, **kw: fallback_claim if name == "claim-analysis" else remote
     service.hits = [_hit("a", 0.9)]
     sent = {}
     service._call_llm = lambda s, u: sent.update(system=s, user=u) or "ok"
@@ -295,6 +296,26 @@ def test_load_prompt_uses_langfuse_version_and_links_generation(lf, service):
 
     assert sent["system"] == "SISTEMA remoto" and sent["user"].startswith("Pergunta: boato |")
     assert prompts.current_prompt.get() is None  # contexto restaurado após a requisição
+
+
+def test_load_claim_prompt_has_independent_langfuse_version(lf):
+    remote = SimpleNamespace(
+        version=9,
+        is_fallback=False,
+        prompt=[
+            {"role": "system", "content": "EXTRATOR remoto"},
+            {"role": "user", "content": "{{message}} / {{url_context}}"},
+        ],
+    )
+    lf.get_prompt = lambda name, **kw: remote
+
+    prompt = prompts.load_claim_prompt()
+
+    assert (prompt.name, prompt.version, prompt.source) == (
+        "claim-analysis",
+        "claim-analysis@9",
+        "langfuse",
+    )
 
 
 def test_load_prompt_ignores_fallback_object(lf):

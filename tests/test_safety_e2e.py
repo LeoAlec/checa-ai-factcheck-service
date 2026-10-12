@@ -12,7 +12,7 @@ from qdrant_client import QdrantClient
 
 import app as app_module
 from src import fact_check_service as fcs
-from src.config import COLLECTION_NAME, EMBED_MODEL
+from src.config import COLLECTION_NAME, EMBED_MODEL, QDRANT_PATH
 from src.fact_check_service import FactCheckService
 from src.models import FactCheckResponse
 from src.rag import web_search
@@ -51,9 +51,12 @@ EXTERNAL_FAILURE_CLAIM = os.environ.get(
 
 
 def _required_environment() -> None:
-    required = ("OPENAI_API_KEY", "TAVILY_API_KEY", "QDRANT_URL", "QDRANT_COLLECTION")
+    required = ("OPENAI_API_KEY", "TAVILY_API_KEY", "QDRANT_COLLECTION")
     missing = [name for name in required if not os.environ.get(name, "").strip()]
     assert not missing, "variáveis obrigatórias ausentes: " + ", ".join(missing)
+    assert os.environ.get("QDRANT_URL", "").strip() or os.environ.get("QDRANT_PATH", "").strip(), (
+        "configure QDRANT_URL para o servidor HTTP ou QDRANT_PATH para o índice local"
+    )
 
 
 def _vector_size(collection_info: Any) -> int:
@@ -65,12 +68,16 @@ def _vector_size(collection_info: Any) -> int:
 @pytest.fixture(scope="module")
 def live_client() -> Generator[TestClient, None, None]:
     _required_environment()
-    qdrant_url = os.environ["QDRANT_URL"].strip()
-    assert qdrant_url.startswith(("http://", "https://")), (
-        "QDRANT_URL deve apontar para o servidor HTTP; fallback local não é aceito no E2E"
-    )
-
-    qdrant = QdrantClient(url=qdrant_url, timeout=5)
+    qdrant_url = os.environ.get("QDRANT_URL", "").strip()
+    if qdrant_url:
+        assert qdrant_url.startswith(("http://", "https://")), "QDRANT_URL deve usar HTTP(S)"
+        qdrant = QdrantClient(url=qdrant_url, timeout=5)
+    else:
+        assert os.environ.get("E2E_ALLOW_REFERENCE_LOCAL_INDEX") == "1", (
+            "o índice local de referência exige E2E_ALLOW_REFERENCE_LOCAL_INDEX=1; "
+            "consulte docs/REAL_QDRANT_VALIDATION.md"
+        )
+        qdrant = QdrantClient(path=str(QDRANT_PATH))
     info = qdrant.get_collection(COLLECTION_NAME)
     assert (info.points_count or 0) > 0, f"coleção {COLLECTION_NAME!r} está vazia"
 

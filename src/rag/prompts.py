@@ -28,8 +28,14 @@ from src.config import PROMPT_LABEL
 
 log = logging.getLogger("checa-ai.prompts")
 
-PROMPT_NAME = "evidence-flow"
-PROMPT_VERSION = "evidence-flow-v3"
+EVIDENCE_PROMPT_NAME = "evidence-flow"
+EVIDENCE_PROMPT_VERSION = "evidence-flow-v3"
+CLAIM_PROMPT_NAME = "claim-analysis"
+CLAIM_PROMPT_VERSION = "claim-analysis-v1"
+
+# Backward-compatible names for callers that refer to the synthesis prompt.
+PROMPT_NAME = EVIDENCE_PROMPT_NAME
+PROMPT_VERSION = EVIDENCE_PROMPT_VERSION
 
 CLAIM_ANALYSIS_SYSTEM_PROMPT = """\
 Você identifica a alegação factual central de mensagens curtas, textos jornalísticos e links.
@@ -104,10 +110,12 @@ ABSTENTION_MESSAGE = "Não foram encontradas evidências suficientes para susten
 class PromptBundle:
     """Prompt resolvido: textos com {{variáveis}} + identificação da versão."""
 
+    name: str
     system: str
     user: str
     version: str            # ex.: "debunk-v1" (local) ou "debunk@3" (Langfuse)
     source: str             # "langfuse" | "local"
+    sha256: str
     langfuse_prompt: Any = None   # objeto do SDK, para ligar a generation ao prompt
 
     def render_user(self, **variables: str) -> str:
@@ -128,29 +136,82 @@ def render(template: str, **variables: str) -> str:
     return template
 
 
+@dataclass(frozen=True)
+class PromptSpec:
+    """Artefato de prompt independente e auditável no Langfuse."""
+
+    name: str
+    version: str
+
+    def messages(self) -> list[dict[str, str]]:
+        if self.name == CLAIM_PROMPT_NAME:
+            return [
+                {"role": "system", "content": CLAIM_ANALYSIS_SYSTEM_PROMPT},
+                {"role": "user", "content": CLAIM_ANALYSIS_USER_PROMPT},
+            ]
+        return local_messages()
+
+    def sha256(self) -> str:
+        return _messages_hash(self.messages())
+
+
+EVIDENCE_PROMPT = PromptSpec(EVIDENCE_PROMPT_NAME, EVIDENCE_PROMPT_VERSION)
+CLAIM_PROMPT = PromptSpec(CLAIM_PROMPT_NAME, CLAIM_PROMPT_VERSION)
+
+
+def prompt_specs() -> tuple[PromptSpec, PromptSpec]:
+    return EVIDENCE_PROMPT, CLAIM_PROMPT
+
+
 def local_prompt() -> PromptBundle:
-    return PromptBundle(SYSTEM_PROMPT, USER_PROMPT, PROMPT_VERSION, "local")
+    """Fallback auditável do prompt de síntese evidencial."""
+    return _local_bundle(EVIDENCE_PROMPT)
+
+
+def local_claim_prompt() -> PromptBundle:
+    """Fallback auditável do prompt de extração de alegação."""
+    return _local_bundle(CLAIM_PROMPT)
+
+
+def _local_bundle(spec: PromptSpec) -> PromptBundle:
+    messages = spec.messages()
+    return PromptBundle(
+        spec.name,
+        messages[0]["content"],
+        messages[1]["content"],
+        spec.version,
+        "local",
+        spec.sha256(),
+    )
 
 
 def load_prompt() -> PromptBundle:
-    """Busca o prompt `PROMPT_NAME` no label PROMPT_LABEL; cai no texto local se preciso."""
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": USER_PROMPT},
-    ]
-    fetched = observability.fetch_chat_prompt(PROMPT_NAME, PROMPT_LABEL, messages)
+    """Resolve o prompt de síntese evidencial no Langfuse ou no fallback local."""
+    return _load_prompt(EVIDENCE_PROMPT)
+
+
+def load_claim_prompt() -> PromptBundle:
+    """Resolve o prompt de extração de alegação no Langfuse ou no fallback local."""
+    return _load_prompt(CLAIM_PROMPT)
+
+
+def _load_prompt(spec: PromptSpec) -> PromptBundle:
+    messages = spec.messages()
+    fetched = observability.fetch_chat_prompt(spec.name, PROMPT_LABEL, messages)
     if fetched is None:
-        return local_prompt()
+        return _local_bundle(spec)
     lf_prompt, remote = fetched
     by_role = {m["role"]: m["content"] for m in remote if isinstance(m, dict) and "role" in m}
     if "system" not in by_role or "user" not in by_role:
-        log.warning("Prompt '%s' no Langfuse sem mensagens system+user; usando o local.", PROMPT_NAME)
-        return local_prompt()
+        log.warning("Prompt '%s' no Langfuse sem mensagens system+user; usando o local.", spec.name)
+        return _local_bundle(spec)
     return PromptBundle(
+        spec.name,
         by_role["system"],
         by_role["user"],
-        f"{PROMPT_NAME}@{lf_prompt.version}",
+        f"{spec.name}@{lf_prompt.version}",
         "langfuse",
+        _messages_hash(remote),
         lf_prompt,
     )
 
@@ -159,22 +220,29 @@ def local_messages() -> list[dict]:
     return [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": USER_PROMPT}]
 
 
-def content_hash() -> str:
-    """Hash de todos os prompts locais que influenciam o fluxo evidencial."""
-    prompt_texts = {
-        "claim_analysis": [
-            {"role": "system", "content": CLAIM_ANALYSIS_SYSTEM_PROMPT},
-            {"role": "user", "content": CLAIM_ANALYSIS_USER_PROMPT},
-        ],
-        "evidence_decision": local_messages(),
-    }
+def _messages_hash(messages: list[dict]) -> str:
     return hashlib.sha256(
-        json.dumps(prompt_texts, ensure_ascii=False, sort_keys=True).encode()
+        json.dumps(messages, ensure_ascii=False, sort_keys=True).encode()
     ).hexdigest()
 
 
-def sync_to_langfuse(labels: list[str]) -> int | None:
+def prompt_manifest() -> dict[str, dict[str, str]]:
+    """Versão e hash de cada prompt local, adequado para lock e auditoria."""
+    return {
+        spec.name: {"version": spec.version, "sha256": spec.sha256()}
+        for spec in prompt_specs()
+    }
+
+
+def content_hash() -> str:
+    """Hash de todos os prompts locais que influenciam o fluxo evidencial."""
+    return hashlib.sha256(
+        json.dumps(prompt_manifest(), ensure_ascii=False, sort_keys=True).encode()
+    ).hexdigest()
+
+
+def sync_to_langfuse(spec: PromptSpec, labels: list[str]) -> int | None:
     """Cria no Langfuse uma nova versão com os textos locais. Retorna a versão criada."""
     return observability.create_chat_prompt(
-        PROMPT_NAME, local_messages(), labels=labels, commit_message=PROMPT_VERSION
+        spec.name, spec.messages(), labels=labels, commit_message=spec.version
     )
