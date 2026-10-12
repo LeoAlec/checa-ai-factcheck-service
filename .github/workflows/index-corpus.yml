@@ -54,7 +54,17 @@ jobs:
           fi
           dvc pull data/processed.dvc
           ls -la data/processed
+          test -s data/processed/fact_checks_clean.jsonl
+
+      # O Silver não é versionado no DVC: é derivado do fact_checks_clean.jsonl
+      # (build determinístico, só biblioteca padrão), então é gerado aqui antes de indexar.
+      - name: Gera o Silver (build_silver_dataset)
+        run: |
+          python scripts/build_silver_dataset.py \
+            --input data/processed/fact_checks_clean.jsonl \
+            --output data/processed/fact_checks_silver.jsonl
           test -s data/processed/fact_checks_silver.jsonl
+          wc -l data/processed/fact_checks_silver.jsonl
 
       - name: Abre túnel SSH para o Qdrant da VM
         env:
