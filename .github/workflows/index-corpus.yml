@@ -1,0 +1,83 @@
+name: Indexar corpus → Qdrant (VM)
+
+# Mantém o Qdrant da VM em dia com o corpus versionado no DVC (data/processed.dvc).
+# Roda quando o ponteiro DVC muda na main, ou manualmente. NÃO roda a cada deploy:
+# reindexar custa chamadas de embedding e o corpus muda raramente.
+# A ingestão é idempotente (IDs estáveis → upsert). `recreate` apaga a coleção antes.
+on:
+  push:
+    branches: [main]
+    paths:
+      - data/processed.dvc
+  workflow_dispatch:
+    inputs:
+      recreate:
+        description: "Apagar e recriar a coleção antes de indexar"
+        type: boolean
+        default: false
+
+concurrency:
+  group: index-corpus
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  index:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: production
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      DAGSHUB_USER: ${{ secrets.DAGSHUB_USER }}
+      DAGSHUB_TOKEN: ${{ secrets.DAGSHUB_TOKEN }}
+      EMBEDDING_PROVIDER: ${{ vars.EMBEDDING_PROVIDER || 'openai' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-ci.txt
+
+      - run: pip install -r requirements-ci.txt "dvc>=3,<4"
+
+      # Remoto DVC no DagsHub. Sem credenciais, tenta leitura anônima (repo público).
+      - name: Baixa o corpus (dvc pull)
+        run: |
+          if [ -n "$DAGSHUB_USER" ] && [ -n "$DAGSHUB_TOKEN" ]; then
+            dvc remote modify --local origin auth basic
+            dvc remote modify --local origin user "$DAGSHUB_USER"
+            dvc remote modify --local origin password "$DAGSHUB_TOKEN"
+          fi
+          dvc pull data/processed.dvc
+          ls -la data/processed
+          test -s data/processed/fact_checks_silver.jsonl
+
+      - name: Abre túnel SSH para o Qdrant da VM
+        env:
+          SSH_KEY: ${{ secrets.AZURE_VM_SSH_KEY }}
+          HOST: ${{ secrets.AZURE_VM_HOST }}
+          VM_USER: ${{ secrets.AZURE_VM_USER }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts
+          ssh -i ~/.ssh/id_deploy -o ExitOnForwardFailure=yes -f -N \
+              -L 6333:127.0.0.1:6333 "$VM_USER@$HOST"
+          curl -fsS http://127.0.0.1:6333/collections
+
+      - name: Indexa no Qdrant
+        env:
+          RECREATE: ${{ inputs.recreate && '--recreate' || '' }}
+        run: |
+          # Ponteiro é do diretório (data/processed.dvc): usa o md5 dele como versão do corpus.
+          export CORPUS_VERSION="$(grep -m1 -oP 'md5:\s*\K[0-9a-f]{32}' data/processed.dvc | cut -c1-12)"
+          python scripts/ingest_to_qdrant.py \
+            --input data/processed/fact_checks_silver.jsonl \
+            --qdrant-url http://127.0.0.1:6333 --require-docker $RECREATE
+
+      - name: Confere as coleções
+        run: curl -fsS http://127.0.0.1:6333/collections
