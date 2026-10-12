@@ -43,6 +43,10 @@ $env:RUN_E2E = "1"
 python -m pytest tests/test_safety_e2e.py -q
 ```
 
+Use uma coleção dedicada, indexada com o mesmo provider, modelo e dimensão usados na
+consulta. O passo a passo completo, incluindo o corpus controlado e o Langfuse opcional,
+está em [Smoke E2E real](docs/LIVE_E2E.md).
+
 ## Fluxo
 
 1. Validação Pydantic da entrada.

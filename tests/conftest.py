@@ -1,9 +1,10 @@
 import os
 import json
 
-# Testes nunca enviam traces ao Langfuse real, mesmo com chaves no .env.
-# (load_dotenv não sobrescreve variáveis já definidas.)
-os.environ["LANGFUSE_ENABLED"] = "false"
+# Testes comuns nunca enviam traces ao Langfuse real. O smoke explicitamente
+# habilitado preserva a configuração do ambiente para validar tracing opcional.
+if not os.environ.get("RUN_E2E"):
+    os.environ["LANGFUSE_ENABLED"] = "false"
 
 import pytest
 
