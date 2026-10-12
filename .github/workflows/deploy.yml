@@ -86,10 +86,16 @@ jobs:
 
           # .env montado a partir dos secrets/variables (nunca fica no repositório).
           # Variáveis vazias são omitidas, para o app usar o default do código.
-          for k in OPENAI_API_KEY TAVILY_API_KEY LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY \
-                   LANGFUSE_BASE_URL LANGFUSE_TRACING_ENVIRONMENT PROMPT_LABEL LLM_MODEL DOMAIN; do
-            [ -n "${!k}" ] && printf '%s=%s\n' "$k" "${!k}"
-          done | $SSH 'umask 077; mkdir -p ~/checa-ai && cat > ~/checa-ai/.env'
+          # APP_IMAGE e COMPOSE_FILE também vão para o .env: assim `docker compose ps/logs/...`
+          # funciona direto na VM, sem flags (o Compose lê o .env da pasta sozinho).
+          {
+            for k in OPENAI_API_KEY TAVILY_API_KEY LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY \
+                     LANGFUSE_BASE_URL LANGFUSE_TRACING_ENVIRONMENT PROMPT_LABEL LLM_MODEL DOMAIN; do
+              [ -n "${!k}" ] && printf '%s=%s\n' "$k" "${!k}"
+            done
+            printf 'APP_IMAGE=%s\n' "$IMAGE"
+            printf 'COMPOSE_FILE=compose.prod.yaml\n'
+          } | $SSH 'umask 077; mkdir -p ~/checa-ai && cat > ~/checa-ai/.env'
 
           # Código: na primeira vez inicializa o git; depois só busca o SHA. O token não é gravado em .git/config.
           $SSH "set -e; cd ~/checa-ai
@@ -100,9 +106,9 @@ jobs:
           # Login no GHCR (o token só vale durante o job; basta para o pull imediato).
           echo "$GH_TOKEN" | $SSH "docker login ghcr.io -u $GH_ACTOR --password-stdin"
 
-          $SSH "cd ~/checa-ai && echo 'APP_IMAGE=$IMAGE' > .image.env \
-            && docker compose -f compose.prod.yaml --env-file .env --env-file .image.env pull app \
-            && docker compose -f compose.prod.yaml --env-file .env --env-file .image.env up -d --remove-orphans \
+          $SSH "cd ~/checa-ai && rm -f .image.env \
+            && docker compose pull app \
+            && docker compose up -d --remove-orphans \
             && docker image prune -f"
 
       - name: Smoke test
