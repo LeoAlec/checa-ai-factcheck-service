@@ -27,6 +27,7 @@ share/python-wheels/
 
 # Virtual Environments
 .venv/
+.venv-classifier-evaluation/
 venv/
 ENV/
 env/
@@ -43,6 +44,10 @@ models/*.h5
 models/*.joblib
 models/*.pt
 models/*.onnx
+
+# Artefatos externos da avaliação offline de classificadores.
+artifacts/
+classifier-artifacts/
 
 # Exploration temporária
 exploration/
