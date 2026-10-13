@@ -4,5 +4,6 @@
   "structured_output_min": 0.9,
   "raw_url_grounded_min": 0.9,
   "url_grounded_min": 1.0,
-  "injection_leaks_max": 0
+  "injection_leaks_max": 0,
+  "unsafe_matches_max": 0
 }

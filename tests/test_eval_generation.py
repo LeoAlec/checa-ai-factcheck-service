@@ -64,6 +64,7 @@ def test_perfect_model_passes_all_thresholds():
     metrics = ev.compute_metrics(rows)
     assert ev.check_thresholds(metrics, TH) == []
     assert metrics["abstention_accuracy"] == 1.0 and metrics["injection_leaks"] == 0
+    assert metrics["unsafe_matches"] == 0
 
 
 def test_low_score_cases_abstain_by_config_threshold():
@@ -116,3 +117,27 @@ def test_threshold_check_reports_unfaithful_runs():
     metrics = {"faithfulness": 0.5, "abstention_accuracy": 1.0, "structured_output": 1.0,
                "raw_url_grounded": 1.0, "url_grounded": 1.0, "injection_leaks": 0}
     assert ev.check_thresholds(metrics, TH) == ["faithfulness = 0.5 < mínimo 0.85"]
+
+
+def test_preflight_without_judge_reports_objective_metrics_only():
+    service = ev.build_service(CASES[0])
+    service._call_llm = lambda system, user: _good(CASES[0])
+    row = ev.run_case(CASES[0], None, service)
+    metrics = ev.compute_metrics([row])
+
+    assert metrics["faithfulness"] is None
+    assert metrics["structured_output"] in {0.0, 1.0}
+    assert ev.check_thresholds(metrics, TH, skipped={"faithfulness"}) == []
+
+
+def test_backend_contract_uses_the_same_golden_evidence():
+    case = CASES[0]
+    service = ev.build_service(case)
+    service._call_llm = lambda system, user: _good(case)
+
+    row = ev.run_backend_case(case, None, service)
+
+    assert row["status"] == "matched"
+    assert row["status_ok"] is True
+    assert row["structured"] is True
+    assert row["grounded"] is True

@@ -22,6 +22,7 @@ from src.config import (
     LLM_BASE_URL,
     LLM_MODEL,
     LLM_PROVIDER,
+    LLM_REASONING_EFFORT,
     LLM_TEMPERATURE,
     LLM_TIMEOUT_SECONDS,
     MAX_CONTEXT_CHARS,
@@ -84,6 +85,20 @@ links nem uma lista de fontes: a API acrescentará as fontes citadas.
 Não invente fatos ou citações. Preencha a saída estruturada exigida; use
 `inconclusiva` e `evidence_sufficient=false` quando os laudos não tratarem da
 mesma alegação. Em `source_urls`, informe as URLs completas dos laudos citados.
+
+Os campos precisam ser semanticamente consistentes:
+- se ao menos um laudo trata diretamente da mesma alegação, use
+  `evidence_sufficient=true`;
+- se esse laudo refuta a alegação, use `conclusion=contradita`;
+- se esse laudo confirma a alegação, use `conclusion=sustentada`;
+- use `evidence_sufficient=false` e `conclusion=inconclusiva` somente quando os
+  laudos forem ausentes, vagos ou tratarem de outro fato.
+
+Antes de concluir, compare explicitamente o assunto, as entidades e o evento da
+alegação com cada laudo. Similaridade de busca não prova pertinência. Um laudo
+sobre pessoa, instituição, doença, benefício, local ou evento diferente não
+pode sustentar nem refutar a alegação; nesse caso, use obrigatoriamente
+`evidence_sufficient=false`, `conclusion=inconclusiva` e `source_urls=[]`.
 """
 
 _BACKEND_USER_PROMPT = """\
@@ -390,6 +405,11 @@ class FactCheckService:
 
     def _chat(self, system: str, user: str, response_format: dict | None) -> str:
         messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
+        request_options: dict[str, Any] = {}
+        if response_format:
+            request_options["response_format"] = response_format
+        if LLM_REASONING_EFFORT:
+            request_options["reasoning_effort"] = LLM_REASONING_EFFORT
         bundle = current_prompt.get()
         prompt_version = _generation_version.get() or (bundle.version if bundle else PROMPT_VERSION)
         with observability.observation(
@@ -405,7 +425,7 @@ class FactCheckService:
                 model=LLM_MODEL,
                 temperature=LLM_TEMPERATURE,
                 messages=messages,
-                **({"response_format": response_format} if response_format else {}),
+                **request_options,
             )
             text = (response.choices[0].message.content or "").strip()
             usage = getattr(response, "usage", None)
@@ -423,6 +443,8 @@ class FactCheckService:
                 metadata={
                     "finish_reason": response.choices[0].finish_reason,
                     "prompt_version": prompt_version,
+                    "llm_provider": LLM_PROVIDER,
+                    "reasoning_effort": LLM_REASONING_EFFORT or None,
                 },
             )
         return text
@@ -659,6 +681,7 @@ class FactCheckService:
             tags=[
                 f"prompt:{prompt.version}",
                 f"claim-prompt:{claim_prompt.version}",
+                f"llm-provider:{LLM_PROVIDER}",
                 f"llm:{LLM_MODEL}",
                 f"corpus:{corpus_version()}",
             ],
@@ -669,6 +692,7 @@ class FactCheckService:
                 "claim_prompt_hash": claim_prompt.sha256,
                 "prompt_source": prompt.source,
                 "llm_model": LLM_MODEL,
+                "llm_provider": LLM_PROVIDER,
                 "embedding_model": EMBED_MODEL,
                 "collection": COLLECTION_NAME,
                 "corpus_version": corpus_version(),
@@ -853,8 +877,18 @@ class FactCheckService:
             "verify-v1",
             input=text,
             version="verify-v1",
-            tags=["prompt:verify-v1", f"llm:{LLM_MODEL}", f"corpus:{corpus_version()}"],
-            metadata={"collection": COLLECTION_NAME, "threshold": SIMILARITY_THRESHOLD},
+            tags=[
+                "prompt:verify-v1",
+                f"llm-provider:{LLM_PROVIDER}",
+                f"llm:{LLM_MODEL}",
+                f"corpus:{corpus_version()}",
+            ],
+            metadata={
+                "collection": COLLECTION_NAME,
+                "threshold": SIMILARITY_THRESHOLD,
+                "llm_provider": LLM_PROVIDER,
+                "llm_model": LLM_MODEL,
+            },
         ) as trace:
             result = self._verify_claim_for_backend(text)
             trace.update(

@@ -86,6 +86,7 @@ LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "openai").strip().lower()
 LLM_MODEL = os.environ.get("LLM_MODEL", "gpt-4o-mini")
 LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "").strip()
 LLM_API_KEY = os.environ.get("LLM_API_KEY", "").strip()
+LLM_REASONING_EFFORT = os.environ.get("LLM_REASONING_EFFORT", "").strip()
 LLM_TEMPERATURE = _env_float("LLM_TEMPERATURE", 0.2)
 # Timeout (s) e retries do cliente OpenAI; sem isso uma chamada pendurada trava o worker.
 LLM_TIMEOUT_SECONDS = _env_float("LLM_TIMEOUT_SECONDS", 30.0)
