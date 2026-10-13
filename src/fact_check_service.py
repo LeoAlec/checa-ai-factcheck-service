@@ -28,6 +28,9 @@ from src.config import (
     SAFE_INJECTION_REFUSAL_MESSAGE,
     SAFE_REFUSAL_MESSAGE,
     SIMILARITY_THRESHOLD,
+    HYBRID_ENABLED,
+    HYBRID_LEXICAL_WEIGHT,
+    NLI_ABSTAIN_ON_DISAGREEMENT,
 )
 from src.models import (
     ClaimAnalysis,
@@ -63,6 +66,10 @@ from src.rag.retriever import (
     unique_sources,
     with_cluster_rerank,
 )
+from src.rag.entities import all_entities_present, extract_entities
+from src.rag.hybrid import hybrid_rerank
+from src.rag.reranker import cross_encoder_rerank
+from src.rag import nli
 from src.rag.web_search import perform_web_search, validate_web_results
 from src.safety.injection import check_injection
 from src.safety.moderation import check_moderation
@@ -132,54 +139,34 @@ def _normalized_text(value: str) -> str:
 
 
 def _specific_named_entities(claim: str) -> list[str]:
-    """Extrai as maiores entidades próprias multi-palavra da alegação.
+    """Extrai as entidades próprias da alegação (spaCy se disponível, senão heurística).
 
     A função é uma salvaguarda conservadora: ela não prova que uma fonte
     contradiz a alegação, mas impede que uma fonte sobre outra pessoa seja
-    apresentada como refutação conclusiva.
+    apresentada como refutação conclusiva. Em mensagens em CAIXA ALTA a
+    heurística não infere entidades, evitando falsos bloqueios.
     """
-    tokens = _WORD_RE.findall(claim)
-    entities: list[str] = []
-    index = 0
-    while index < len(tokens):
-        token = tokens[index]
-        if not token[:1].isupper() or token.lower() in {"a", "o", "os", "as", "um", "uma"}:
-            index += 1
-            continue
-        parts = [token]
-        capitals = 1
-        cursor = index + 1
-        while cursor < len(tokens):
-            candidate = tokens[cursor]
-            if candidate[:1].isupper():
-                parts.append(candidate)
-                capitals += 1
-                cursor += 1
-                continue
-            if (
-                candidate.lower() in _ENTITY_PARTICLES
-                and cursor + 1 < len(tokens)
-                and tokens[cursor + 1][:1].isupper()
-            ):
-                parts.append(candidate)
-                cursor += 1
-                continue
-            break
-        if capitals >= 2:
-            entities.append(" ".join(parts))
-        index = max(cursor, index + 1)
-    return sorted({_normalized_text(entity) for entity in entities}, key=len, reverse=True)
+    return extract_entities(claim)
 
 
 def _contradiction_has_entity_anchor(claim: str, sources: list[EvidenceSource]) -> bool:
     """Exige que a refutação mencione a entidade própria principal da alegação."""
-    entities = _specific_named_entities(claim)
-    if not entities:
-        return True
-    source_text = _normalized_text(
-        " ".join(f"{source.title} {source.relevant_excerpt}" for source in sources)
-    )
-    return all(entity in source_text for entity in entities)
+    source_text = " ".join(f"{source.title} {source.relevant_excerpt}" for source in sources)
+    return all_entities_present(claim, source_text)
+
+
+def _nli_check(claim: str, conclusion: EvidenceConclusion, sources: list[EvidenceSource]) -> dict[str, Any] | None:
+    """Segunda opinião NLI (desligada por padrão). Retorna None sem opinião."""
+    if not sources:
+        return None
+    result = nli.classify(claim, " ".join(s.relevant_excerpt for s in sources))
+    if result is None:
+        return None
+    return {
+        "label": result.label,
+        "conclusion": result.conclusion,
+        "agrees": nli.agrees(conclusion.value, result),
+    }
 
 
 def _evidence_to_dict(ev: Evidence) -> dict[str, Any]:
@@ -316,6 +303,9 @@ class FactCheckService:
                     continue
                 valid.append(item)
             ranked = with_cluster_rerank(valid)
+            if HYBRID_ENABLED:
+                ranked = hybrid_rerank(query, ranked, lexical_weight=HYBRID_LEXICAL_WEIGHT)
+            ranked = cross_encoder_rerank(query, ranked)
             selected = select_evidences(
                 ranked,
                 max_chunks=top_k,
@@ -726,6 +716,13 @@ class FactCheckService:
         if report.invalid_citations:
             answer.evidence_sufficient = False
             answer.conclusion = EvidenceConclusion.INCONCLUSIVE
+
+        nli_opinion = _nli_check(claim, answer.conclusion, result_sources)
+        if nli_opinion is not None:
+            logger.info("NLI auxiliar: %s", nli_opinion)
+            if nli_opinion["agrees"] is False and NLI_ABSTAIN_ON_DISAGREEMENT:
+                answer.evidence_sufficient = False
+                answer.conclusion = EvidenceConclusion.INCONCLUSIVE
 
         if (
             answer.conclusion is EvidenceConclusion.CONTRADICTED

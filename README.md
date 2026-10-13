@@ -139,9 +139,26 @@ O comando gera JSON, Markdown e, quando houver avaliações, uma curva de confia
 
 Os totais históricos atribuídos ao FakeRecogna usam universos e filtros diferentes; veja a [auditoria dos números](docs/FAKERECOGNA_AUDIT.md). Eles não devem ser usados para comparar ou aprovar modelos sem igualar corpus, splits e métricas.
 
+## Retrieval avançado, golden set e calibração
+
+- **Híbrido (padrão ligado):** os candidatos do Qdrant são repontuados com BM25 e fundidos com a ordem densa/cluster por RRF (`src/rag/hybrid.py`). O `score` de similaridade, usado no limiar, nunca é alterado. A comparação A/B é feita com `HYBRID_ENABLED=false`.
+- **Reranker cross-encoder (opcional):** `RERANKER_ENABLED=true` usa `BAAI/bge-reranker-v2-m3` sobre o top-N. Requer `requirements-nlp-advanced.txt`. Falhas voltam à ordem anterior.
+- **Entidades:** `src/rag/entities.py` usa spaCy quando disponível (`NER_BACKEND=auto`), senão uma heurística que detecta siglas e nomes multi-palavra, aceita aliases (STF ↔ Supremo Tribunal Federal) e não infere entidades em mensagens em CAIXA ALTA.
+- **NLI auxiliar (opcional):** `NLI_ENABLED=true` registra se um verificador NLI concorda com o LLM. Com `NLI_ABSTAIN_ON_DISAGREEMENT=true`, a discordância força `inconclusiva`.
+- **Limiar por provedor/modelo:** `scripts/calibrate_threshold.py` grava `evals/calibrated_thresholds.json` a partir de um relatório de `evaluate_retrieval.py`. O valor só é gravado com pelo menos 40 casos e a precisão-alvo atingida. `SIMILARITY_THRESHOLD` no ambiente continua tendo prioridade.
+
+### Golden set de alegações (100 itens, verificado por LLM)
+
+```bash
+python scripts/build_golden_claims.py          # gera evals/golden_claims.jsonl + relatório
+python scripts/eval_golden_claims.py [--nli]   # acurácia/macro-F1 com IC95%, por fenômeno
+```
+
+O conjunto é **sintético e verificado por um juiz LLM cego**, não por humanos. Cada alegação tem um laudo fictício de referência. Só entram itens em que o gerador e o juiz concordam, e o relatório traz a concordância e o kappa. Ele mede a consistência alegação↔laudo, não a verdade no mundo. O script exporta uma amostra em `golden_claims_human_review.csv` para revisão humana, necessária para estimar o erro do próprio juiz. Os limiares `claims_*` em `evals/thresholds.json` são comparados com o **limite inferior** do IC95%.
+
 ## Limitações da fase 1
 
-- Não há NER, NLI nem classificador probabilístico integrado ao serviço; a avaliação offline não altera a produção.
+- NER (spaCy) e NLI são opcionais e desligados/heurísticos por padrão; não há classificador probabilístico integrado ao serviço, e a avaliação offline não altera a produção.
 - A suficiência é uma decisão evidencial estruturada da síntese, protegida por invariantes determinísticos, mas ainda requer avaliação contínua.
 - A busca web depende da cobertura e disponibilidade do Tavily; resultados inválidos ou com prompt injection são descartados.
 - O corpus Qdrant deve ser alimentado separadamente pelos scripts de ingestão existentes.

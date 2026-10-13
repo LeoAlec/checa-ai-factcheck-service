@@ -4,5 +4,7 @@
   "structured_output_min": 0.9,
   "raw_url_grounded_min": 0.9,
   "url_grounded_min": 1.0,
-  "injection_leaks_max": 0
+  "injection_leaks_max": 0,
+  "claims_accuracy_min": 0.7,
+  "claims_macro_f1_min": 0.65
 }

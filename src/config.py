@@ -59,7 +59,23 @@ CHUNK_OVERLAP = _env_int("CHUNK_OVERLAP", 120)
 DEFAULT_LANGUAGE = os.environ.get("DEFAULT_LANGUAGE", "pt")
 
 # ─── Retrieval ───────────────────────────────────────────────────────
-SIMILARITY_THRESHOLD = _env_float("SIMILARITY_THRESHOLD", 0.60)
+def _calibrated_threshold(default: float) -> float:
+    """Limiar calibrado para `provider/modelo` (scripts/calibrate_threshold.py).
+
+    Cosseno de modelos de embedding diferentes tem distribuições diferentes,
+    então o mesmo valor fixo não é comparável entre provedores.
+    """
+    path = PROJECT_ROOT / "evals" / "calibrated_thresholds.json"
+    try:
+        import json
+
+        entry = json.loads(path.read_text(encoding="utf-8")).get(f"{EMBEDDING_PROVIDER}/{EMBED_MODEL}")
+        return float(entry["threshold"]) if entry else default
+    except (OSError, ValueError, KeyError, TypeError):
+        return default
+
+
+SIMILARITY_THRESHOLD = _env_float("SIMILARITY_THRESHOLD", _calibrated_threshold(0.60))
 # Máximo de chunks que chegam ao LLM, e de documentos distintos entre eles.
 RETRIEVAL_TOP_K = _env_int("RETRIEVAL_TOP_K", 5)
 MAX_DOCUMENTS = _env_int("MAX_DOCUMENTS", 3)
@@ -81,9 +97,29 @@ CLUSTER_NEEDS_SUBCLUSTER_PENALTY = _env_float("CLUSTER_NEEDS_SUBCLUSTER_PENALTY"
 CLUSTER_LOW_CONFIDENCE_PENALTY = _env_float("CLUSTER_LOW_CONFIDENCE_PENALTY", 0.005)
 CLUSTER_HIGH_CONFIDENCE_BONUS = _env_float("CLUSTER_HIGH_CONFIDENCE_BONUS", 0.005)
 
+
+def _env_flag(name: str, default: bool) -> bool:
+    return os.environ.get(name, str(default)).strip().lower() in {"1", "true", "yes", "on"}
+
+
+# ─── Híbrido (BM25 + denso, RRF) e reranker cross-encoder ────────────
+HYBRID_ENABLED = _env_flag("HYBRID_ENABLED", True)
+HYBRID_LEXICAL_WEIGHT = _env_float("HYBRID_LEXICAL_WEIGHT", 1.2)  # >1 quebra empates do RRF a favor do lexical; tunar com evaluate_retrieval
+RERANKER_ENABLED = _env_flag("RERANKER_ENABLED", False)
+RERANKER_MODEL = os.environ.get("RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
+RERANKER_TOP_N = _env_int("RERANKER_TOP_N", 15)
+
+# ─── Entidades (NER) e NLI auxiliar ──────────────────────────────────
+NER_BACKEND = os.environ.get("NER_BACKEND", "auto").lower()  # auto | spacy | heuristic
+NER_SPACY_MODEL = os.environ.get("NER_SPACY_MODEL", "pt_core_news_lg")
+NLI_ENABLED = _env_flag("NLI_ENABLED", False)
+NLI_MODEL = os.environ.get("NLI_MODEL", "MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7")
+NLI_ABSTAIN_ON_DISAGREEMENT = _env_flag("NLI_ABSTAIN_ON_DISAGREEMENT", False)
+
 # ─── LLM ─────────────────────────────────────────────────────────────
 LLM_MODEL = os.environ.get("LLM_MODEL", "gpt-4o-mini")
-LLM_TEMPERATURE = _env_float("LLM_TEMPERATURE", 0.2)
+# Tarefa de classificação/grounding: 0 por padrão para reprodutibilidade.
+LLM_TEMPERATURE = _env_float("LLM_TEMPERATURE", 0.0)
 # Timeout (s) e retries do cliente OpenAI; sem isso uma chamada pendurada trava o worker.
 LLM_TIMEOUT_SECONDS = _env_float("LLM_TIMEOUT_SECONDS", 30.0)
 LLM_MAX_RETRIES = _env_int("LLM_MAX_RETRIES", 2)
