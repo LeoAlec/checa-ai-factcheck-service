@@ -37,14 +37,11 @@ from src import observability  # noqa: E402
 from src.rag import prompts  # noqa: E402
 
 LOCK_PATH = ROOT / "src" / "rag" / "prompts.lock.json"
-NAME = prompts.PROMPT_NAME
-
-
-def find_matching_version() -> tuple[int, list[str]] | None:
+def find_matching_version(spec: prompts.PromptSpec) -> tuple[int, list[str]] | None:
     """Versão do Langfuse com texto idêntico ao local (procura em latest/staging/production)."""
-    local = prompts.local_messages()
+    local = spec.messages()
     for label in ("latest", "staging", "production"):
-        found = observability.get_prompt_version(NAME, label)
+        found = observability.get_prompt_version(spec.name, label)
         if found and found[1] == local:
             return found[0], [label]
     return None
@@ -52,66 +49,78 @@ def find_matching_version() -> tuple[int, list[str]] | None:
 
 def cmd_write_lock() -> int:
     LOCK_PATH.write_text(
-        json.dumps({"version": prompts.PROMPT_VERSION, "sha256": prompts.content_hash()}, indent=2) + "\n"
+        json.dumps(
+            {"schema_version": 2, "sha256": prompts.content_hash(), "prompts": prompts.prompt_manifest()},
+            indent=2,
+            ensure_ascii=False,
+        ) + "\n"
     )
-    print(f"🔒 {LOCK_PATH.relative_to(ROOT)} atualizado ({prompts.PROMPT_VERSION}).")
+    print(f"LOCK {LOCK_PATH.relative_to(ROOT)} atualizado ({len(prompts.prompt_specs())} prompts).")
     return 0
 
 
-def cmd_sync(label: str, check: bool) -> int:
+def cmd_sync_one(spec: prompts.PromptSpec, label: str, check: bool) -> int:
     if not observability.is_enabled():
         print("❌ Langfuse desligado ou sem chaves (LANGFUSE_PUBLIC_KEY/SECRET_KEY).", file=sys.stderr)
         return 1
-    match = find_matching_version()
+    match = find_matching_version(spec)
     if match:
         version, _ = match
-        has_label = (observability.get_prompt_version(NAME, label) or (None,))[0] == version
+        has_label = (observability.get_prompt_version(spec.name, label) or (None,))[0] == version
         if has_label:
-            print(f"✅ Sem mudanças: '{NAME}' v{version} já está em '{label}' ({prompts.PROMPT_VERSION}).")
+            print(f"OK Sem mudanças: '{spec.name}' v{version} já está em '{label}' ({spec.version}).")
         elif check:
-            print(f"ℹ️  Texto igual à v{version}; o label '{label}' seria movido para ela.")
+            print(f"INFO Texto igual à v{version}; o label '{label}' seria movido para ela.")
         else:
-            if not observability.set_prompt_labels(NAME, version, [label]):
+            if not observability.set_prompt_labels(spec.name, version, [label]):
                 return 1
-            print(f"✅ Label '{label}' movido para '{NAME}' v{version} (texto inalterado).")
+            print(f"OK Label '{label}' movido para '{spec.name}' v{version} (texto inalterado).")
         return 0
 
     if check:
-        print(f"📝 O texto local ({prompts.PROMPT_VERSION}) difere do Langfuse: uma nova versão seria criada em '{label}'.")
+        print(f"INFO O texto local de '{spec.name}' ({spec.version}) difere do Langfuse: uma nova versão seria criada em '{label}'.")
         return 0
-    version = prompts.sync_to_langfuse([label])
+    version = prompts.sync_to_langfuse(spec, [label])
     observability.flush()
     if version is None:
         print("❌ Falha ao publicar o prompt (veja os logs).", file=sys.stderr)
         return 1
-    print(f"✅ Prompt '{NAME}' v{version} publicado em '{label}' (origem {prompts.PROMPT_VERSION}).")
+    print(f"OK Prompt '{spec.name}' v{version} publicado em '{label}' (origem {spec.version}).")
     return 0
 
 
-def cmd_promote(check: bool) -> int:
+def cmd_sync(label: str, check: bool) -> int:
+    return max(cmd_sync_one(spec, label, check) for spec in prompts.prompt_specs())
+
+
+def cmd_promote_one(spec: prompts.PromptSpec, check: bool) -> int:
     if not observability.is_enabled():
         print("❌ Langfuse desligado ou sem chaves.", file=sys.stderr)
         return 1
-    match = find_matching_version()
+    match = find_matching_version(spec)
     if not match:
         print(
-            f"❌ Nenhuma versão no Langfuse com o texto local ({prompts.PROMPT_VERSION}). "
+            f"❌ Nenhuma versão no Langfuse para '{spec.name}' com o texto local ({spec.version}). "
             "Rode o sync (merge na main) antes de promover.",
             file=sys.stderr,
         )
         return 1
     version, _ = match
-    current = observability.get_prompt_version(NAME, "production")
+    current = observability.get_prompt_version(spec.name, "production")
     if current and current[0] == version:
-        print(f"✅ 'production' já aponta para '{NAME}' v{version}.")
+        print(f"OK 'production' já aponta para '{spec.name}' v{version}.")
         return 0
     if check:
-        print(f"ℹ️  'production' passaria de v{current[0] if current else '-'} para v{version}.")
+        print(f"INFO 'production' passaria de v{current[0] if current else '-'} para v{version}.")
         return 0
-    if not observability.set_prompt_labels(NAME, version, ["production"]):
+    if not observability.set_prompt_labels(spec.name, version, ["production"]):
         return 1
-    print(f"🚀 '{NAME}' v{version} promovida para 'production' (antes: v{current[0] if current else '-'}).")
+    print(f"OK '{spec.name}' v{version} promovida para 'production' (antes: v{current[0] if current else '-'}).")
     return 0
+
+
+def cmd_promote(check: bool) -> int:
+    return max(cmd_promote_one(spec, check) for spec in prompts.prompt_specs())
 
 
 def main() -> int:

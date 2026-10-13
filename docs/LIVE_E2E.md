@@ -6,7 +6,9 @@ ser executado com credenciais em linha de comando ou versionadas no Git.
 
 O Compose usa Qdrant `v1.13.4` e as dependências fixam `qdrant-client==1.13.3`,
 a versão de cliente publicada compatível com essa linha do servidor.
-Mantenha essas versões alinhadas antes de executar o smoke.
+Mantenha essas versões alinhadas antes de executar o smoke. Para usar a coleção
+de referência existente sem reindexá-la, leia antes [a configuração de validação
+real](REAL_QDRANT_VALIDATION.md).
 
 ## Configuração
 

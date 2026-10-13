@@ -244,6 +244,35 @@ def test_semantically_similar_source_about_another_claim_is_not_enough(
     assert [source["url"] for source in result["sources"]] == [LOCAL_URL]
 
 
+def test_contradiction_requires_the_specific_claim_entity(service, monkeypatch):
+    service.hits = [
+        _hit(
+            "Fernando Henrique Cardoso ajudou a elaborar a plataforma eleitoral do MDB "
+            "em 1974. Lula é citado apenas como apoiador sindical em outro contexto."
+        )
+    ]
+    service.claim_answer = _claim_analysis(
+        claim=(
+            "Luiz Inácio Lula da Silva ajudou a elaborar a plataforma eleitoral "
+            "do MDB em 1974"
+        )
+    )
+    service.local_answer = _decision(
+        "contradita",
+        explanation="A fonte fala de FHC, portanto contradiz Lula [1].",
+        urls=[LOCAL_URL],
+    )
+    monkeypatch.setattr(fcs, "perform_web_search", lambda query, max_results=5: [])
+
+    result = service.verify_claim(
+        "Luiz Inácio Lula da Silva ajudou a elaborar a plataforma eleitoral do MDB em 1974"
+    )
+
+    assert result["status"] == "abstained"
+    assert result["conclusion"] == "inconclusiva"
+    assert result["evidence_sufficient"] is False
+
+
 def test_extracted_claim_is_used_for_retrieval(service):
     service.hits = [_hit()]
     queries: list[str] = []
