@@ -81,6 +81,7 @@ Responda apenas com a contranarrativa curta e suas citações numeradas.
 """
 
 _NARRATIVE_LIMIT = 500
+_DEEP_SEARCH_NARRATIVE_LIMIT = 900
 _REPLY_FIXED_RESERVE = 350
 _MIN_NARRATIVE_CHARS = 80
 _CITATION_PATTERN = re.compile(r"\[(\d+)\]")
@@ -318,14 +319,29 @@ class FactCheckService:
 
         # 2. Geração de síntese cautelosa
         # Prompt do DeepSearch é outro: não atribuir a versão do prompt "debunk" a esta generation.
+        system_prompt = (
+            f"{DEEP_SEARCH_SYSTEM_PROMPT}\n"
+            f"Limite a resposta completa a {_DEEP_SEARCH_NARRATIVE_LIMIT} caracteres, "
+            "preservando integralmente o aviso final obrigatório e todas as regras acima."
+        )
         token = current_prompt.set(None)
         try:
-            narrative = self._call_llm_text(DEEP_SEARCH_SYSTEM_PROMPT, user_prompt)
+            narrative = self._call_llm_text(system_prompt, user_prompt).strip()
+            if len(narrative) > _DEEP_SEARCH_NARRATIVE_LIMIT:
+                narrative = self._call_llm_text(
+                    system_prompt + "\nGere uma nova síntese mais breve a partir dos resultados "
+                    "da busca, mantendo integralmente o aviso final obrigatório.",
+                    user_prompt,
+                ).strip()
         except Exception:
             logger.error("Erro ao gerar síntese DeepSearch")
             return self._abstention(score, evidences)
         finally:
             current_prompt.reset(token)
+
+        if not narrative or len(narrative) > _DEEP_SEARCH_NARRATIVE_LIMIT:
+            logger.warning("Síntese DeepSearch vazia ou acima do limite de caracteres")
+            return self._abstention(score, evidences)
 
         # 3. Validação de Segurança (Saída)
         val_result = validate_output(narrative)
