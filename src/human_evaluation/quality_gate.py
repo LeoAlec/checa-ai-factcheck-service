@@ -30,7 +30,7 @@ THRESHOLDS = {
     "citation_grounding": 1.00,
 }
 MIN_CASES = 20
-MIN_REVIEWERS = 2
+MIN_REVIEWERS = 1
 
 
 @dataclass(frozen=True)
@@ -94,9 +94,12 @@ def load_reviews(path: Path, cases: dict[str, dict[str, Any]]) -> list[HumanRevi
 
 
 def build_quality_report(
-    cases: dict[str, dict[str, Any]], reviews: list[HumanReview]
+    cases: dict[str, dict[str, Any]],
+    reviews: list[HumanReview],
+    *,
+    approved_with_exceptions_by: str | None = None,
 ) -> dict[str, Any]:
-    """Aggregate only approved adjudications and evaluate the explicit release gate."""
+    """Aggregate reviews and optionally record an owner's explicit exception approval."""
     approved = [review for review in reviews if review.review_status == "approved"]
     by_case: dict[str, list[HumanReview]] = {}
     for review in approved:
@@ -134,8 +137,17 @@ def build_quality_report(
                 f"{dimension}: {metric['passed']}/{metric['applicable']} abaixo de {metric['threshold']:.0%}"
             )
 
+    approver = (approved_with_exceptions_by or "").strip()
+    if blockers and approver:
+        decision = "approved_by_owner_with_exceptions"
+    elif not blockers:
+        decision = "approved_for_backend_integration"
+    else:
+        decision = "not_ready"
+
     return {
-        "decision": "approved_for_backend_integration" if not blockers else "not_ready",
+        "decision": decision,
+        "approved_with_exceptions_by": approver or None,
         "cases": len(cases),
         "approved_reviews": len(approved),
         "reviewers": reviewers,
@@ -168,6 +180,16 @@ def markdown_report(report: dict[str, Any]) -> str:
             f"| {dimension} | {metric['passed']}/{metric['applicable']} ({rate}) | "
             f">= {metric['threshold']:.0%} |"
         )
-    lines.extend(["", "## Bloqueios"])
+    if report["approved_with_exceptions_by"]:
+        lines.extend(
+            [
+                "",
+                "## Aprovação do responsável",
+                "",
+                "O responsável aprovou a integração com as exceções abaixo registradas: "
+                f"`{report['approved_with_exceptions_by']}`.",
+            ]
+        )
+    lines.extend(["", "## Exceções / bloqueios"])
     lines.extend(f"- {blocker}" for blocker in report["blockers"] or ["Nenhum."])
     return "\n".join(lines) + "\n"

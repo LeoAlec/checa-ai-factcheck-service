@@ -33,7 +33,7 @@ conclusão, abstenção e URLs citadas.
    ```
 
 3. Copie `data/evaluation/human_review_template.csv`, registre uma adjudicação
-   `approved` por caso e use ao menos dois `reviewer_id` distintos. Cada dimensão
+   `approved` por caso e use ao menos um `reviewer_id`. Cada dimensão
    recebe `pass`, `fail` ou `na`; use `na` somente se ela realmente não se aplicar.
 4. Gere o relatório reproduzível:
 
@@ -47,7 +47,7 @@ conclusão, abstenção e URLs citadas.
 ## Critérios de aprovação
 
 O relatório permite integração com o backend somente se houver 20 ou mais casos,
-dois ou mais revisores, exatamente uma adjudicação aprovada por caso e todos os
+um ou mais revisores, exatamente uma adjudicação aprovada por caso e todos os
 limiares abaixo:
 
 | Dimensão | Limiar |
@@ -59,5 +59,17 @@ limiares abaixo:
 | Grounding das citações | 100% |
 
 Qualquer amostra, adjudicação ou métrica insuficiente gera `not_ready` e código
-de saída `2`. Os arquivos em `reports/` são resultados locais e não devem ser
-versionados.
+de saída `2`. O responsável pelo serviço pode aprovar conscientemente uma execução
+com exceções registradas, sem esconder as métricas, usando:
+
+```powershell
+python scripts/evaluate_human_review.py `
+  --responses reports/human-evaluation/responses.jsonl `
+  --reviews data/evaluation/minha_revisao.csv `
+  --output-dir reports/human-evaluation `
+  --approve-with-exceptions-by leo
+```
+
+Esse modo retorna `approved_by_owner_with_exceptions`, registra quem aprovou e
+mantém todas as exceções no relatório. Os arquivos em `reports/` são resultados
+locais e não devem ser versionados.

@@ -52,6 +52,21 @@ def test_quality_gate_approves_complete_human_review(tmp_path):
     assert report["metrics"]["citation_grounding"]["rate"] == 1.0
 
 
+def test_quality_gate_accepts_one_human_reviewer(tmp_path):
+    cases_path = tmp_path / "responses.jsonl"
+    reviews_path = tmp_path / "reviews.csv"
+    _write_cases(cases_path)
+    cases = load_cases(cases_path)
+    _write_reviews(reviews_path, cases)
+    contents = reviews_path.read_text(encoding="utf-8").replace("reviewer-1", "reviewer-0")
+    reviews_path.write_text(contents, encoding="utf-8")
+
+    report = build_quality_report(cases, load_reviews(reviews_path, cases))
+
+    assert report["decision"] == "approved_for_backend_integration"
+    assert report["reviewers"] == ["reviewer-0"]
+
+
 def test_quality_gate_blocks_insufficient_or_failed_human_review(tmp_path):
     cases_path = tmp_path / "responses.jsonl"
     reviews_path = tmp_path / "reviews.csv"
@@ -63,6 +78,24 @@ def test_quality_gate_blocks_insufficient_or_failed_human_review(tmp_path):
 
     assert report["decision"] == "not_ready"
     assert any("amostra insuficiente" in blocker for blocker in report["blockers"])
+    assert any("citation_grounding" in blocker for blocker in report["blockers"])
+
+
+def test_quality_gate_records_owner_approval_with_exceptions(tmp_path):
+    cases_path = tmp_path / "responses.jsonl"
+    reviews_path = tmp_path / "reviews.csv"
+    _write_cases(cases_path)
+    cases = load_cases(cases_path)
+    _write_reviews(reviews_path, cases, fail_dimension="citation_grounding")
+
+    report = build_quality_report(
+        cases,
+        load_reviews(reviews_path, cases),
+        approved_with_exceptions_by="leo",
+    )
+
+    assert report["decision"] == "approved_by_owner_with_exceptions"
+    assert report["approved_with_exceptions_by"] == "leo"
     assert any("citation_grounding" in blocker for blocker in report["blockers"])
 
 
