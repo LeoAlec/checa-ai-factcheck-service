@@ -79,6 +79,19 @@ jobs:
               -L 6333:127.0.0.1:6333 "$VM_USER@$HOST"
           curl -fsS http://127.0.0.1:6333/collections
 
+      # Rede de segurança do --recreate: o snapshot fica no volume do Qdrant na VM.
+      # Restauração: docs/runbooks/rollback.md.
+      - name: Snapshot da coleção antes de recriar
+        if: ${{ inputs.recreate }}
+        run: |
+          COLLECTION="$(python -c 'from src.config import COLLECTION_NAME; print(COLLECTION_NAME)')"
+          if curl -fsS "http://127.0.0.1:6333/collections/$COLLECTION" >/dev/null; then
+            curl -fsS -X POST "http://127.0.0.1:6333/collections/$COLLECTION/snapshots?wait=true" | tee /dev/stderr
+            echo "::notice::snapshot criado para '$COLLECTION' (veja o nome acima)"
+          else
+            echo "::notice::coleção '$COLLECTION' não existe; nada a salvar"
+          fi
+
       - name: Indexa no Qdrant
         env:
           RECREATE: ${{ inputs.recreate && '--recreate' || '' }}
