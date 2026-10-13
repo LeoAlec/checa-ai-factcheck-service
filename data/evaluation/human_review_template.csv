@@ -1,0 +1,2 @@
+case_id,reviewer_id,review_status,claim_extraction,source_relevance,conclusion_correct,abstention_correct,citation_grounding,notes
+local-support-001,reviewer-a,pending,na,na,na,na,na,Preencher após revisar a resposta capturada.

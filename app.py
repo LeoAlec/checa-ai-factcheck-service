@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import sys
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -39,6 +40,7 @@ from typing import Literal
 sys.path.insert(0, str(Path(__file__).parent))
 from src import observability
 from src.fact_check_service import FactCheckService
+from src.models import ClaimRequest, FactCheckResponse
 from src.api.v1 import router as v1_router
 
 log = logging.getLogger("checa-ai")
@@ -50,7 +52,7 @@ TEMPLATES  = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 # ─── Lifespan: carrega modelos pesados UMA VEZ no startup ─────────────
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     log.info("🚀 Checa-AI startup — carregando FactCheckService…")
     try:
         await to_thread.run_sync(FactCheckService.get_instance)
@@ -77,7 +79,7 @@ app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="stat
 
 # ─── Schemas ──────────────────────────────────────────────────────────
 class DebunkRequest(BaseModel):
-    message: str = Field(..., min_length=10, description="Texto suspeito a ser verificado")
+    message: str = Field(min_length=10, description="Texto suspeito a ser verificado")
     session_id: str | None = Field(
         default=None, max_length=64, pattern=r"^[A-Za-z0-9_-]+$",
         description="Agrupa requisições do mesmo visitante no Langfuse",
@@ -85,7 +87,7 @@ class DebunkRequest(BaseModel):
 
 
 class FeedbackRequest(BaseModel):
-    trace_id: str = Field(..., pattern=r"^[0-9a-f]{32}$")
+    trace_id: str = Field(pattern=r"^[0-9a-f]{32}$")
     value: Literal["up", "down"]
     comment: str | None = Field(default=None, max_length=500)
 
@@ -122,12 +124,12 @@ class DebunkResponse(BaseModel):
 
 # ─── Rotas ────────────────────────────────────────────────────────────
 @app.get("/", include_in_schema=False)
-async def root():
+async def root() -> RedirectResponse:
     return RedirectResponse(url="/debunk")
 
 
 @app.get("/debunk", response_class=HTMLResponse, include_in_schema=False)
-async def debunk_page(request: Request):
+async def debunk_page(request: Request) -> HTMLResponse:
     return TEMPLATES.TemplateResponse(
         request=request,
         name="pages/debunk.html",
@@ -136,7 +138,7 @@ async def debunk_page(request: Request):
 
 
 @app.post("/api/debunk", response_model=DebunkResponse)
-def api_debunk(body: DebunkRequest):  # def (não async): roda em threadpool, sem bloquear o loop
+def api_debunk(body: DebunkRequest) -> DebunkResponse:  # threadpool do FastAPI
     """
     Recebe uma mensagem suspeita e retorna:
     - status: matched (contranarrativa gerada) ou abstained (sem checagem)
@@ -174,8 +176,22 @@ def api_debunk(body: DebunkRequest):  # def (não async): roda em threadpool, se
     )
 
 
+@app.post("/api/v2/debunk")
+def api_debunk_v2(body: ClaimRequest) -> FactCheckResponse:
+    """Retorna a conclusão evidencial versionada sem alterar o contrato legado."""
+    try:
+        service = FactCheckService.get_instance()
+        result = service.verify_claim(body.message, session_id=body.session_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        log.exception("Erro inesperado em /api/v2/debunk")
+        raise HTTPException(status_code=500, detail="Erro interno no servidor.") from exc
+    return FactCheckResponse.model_validate(result)
+
+
 @app.post("/api/feedback", status_code=202)
-def api_feedback(body: FeedbackRequest):
+def api_feedback(body: FeedbackRequest) -> dict[str, bool]:
     """Registra 👍/👎 do usuário como score `user_feedback` no trace da resposta."""
     recorded = observability.score_trace(
         body.trace_id,
@@ -192,5 +208,5 @@ def api_feedback(body: FeedbackRequest):
 
 # ─── Healthcheck ──────────────────────────────────────────────────────
 @app.get("/health")
-async def health():
+async def health() -> dict[str, str]:
     return {"status": "ok", "service": "checa-ai"}
