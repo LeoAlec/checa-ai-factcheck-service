@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 import os
+import re
+import unicodedata
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -66,6 +68,70 @@ from src.safety.moderation import check_moderation
 from src.safety.validator import validate_output
 
 logger = logging.getLogger("checa-ai.fact-check")
+
+_ENTITY_PARTICLES = {"da", "das", "de", "do", "dos", "e"}
+_WORD_RE = re.compile(r"[A-Za-zÀ-ÖØ-öø-ÿ]+")
+
+
+def _normalized_text(value: str) -> str:
+    """Normaliza texto para comparar entidades sem depender de acentuação."""
+    decomposed = unicodedata.normalize("NFKD", value)
+    return " ".join(
+        "".join(char for char in decomposed if not unicodedata.combining(char))
+        .casefold()
+        .split()
+    )
+
+
+def _specific_named_entities(claim: str) -> list[str]:
+    """Extrai as maiores entidades próprias multi-palavra da alegação.
+
+    A função é uma salvaguarda conservadora: ela não prova que uma fonte
+    contradiz a alegação, mas impede que uma fonte sobre outra pessoa seja
+    apresentada como refutação conclusiva.
+    """
+    tokens = _WORD_RE.findall(claim)
+    entities: list[str] = []
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if not token[:1].isupper() or token.lower() in {"a", "o", "os", "as", "um", "uma"}:
+            index += 1
+            continue
+        parts = [token]
+        capitals = 1
+        cursor = index + 1
+        while cursor < len(tokens):
+            candidate = tokens[cursor]
+            if candidate[:1].isupper():
+                parts.append(candidate)
+                capitals += 1
+                cursor += 1
+                continue
+            if (
+                candidate.lower() in _ENTITY_PARTICLES
+                and cursor + 1 < len(tokens)
+                and tokens[cursor + 1][:1].isupper()
+            ):
+                parts.append(candidate)
+                cursor += 1
+                continue
+            break
+        if capitals >= 2:
+            entities.append(" ".join(parts))
+        index = max(cursor, index + 1)
+    return sorted({_normalized_text(entity) for entity in entities}, key=len, reverse=True)
+
+
+def _contradiction_has_entity_anchor(claim: str, sources: list[EvidenceSource]) -> bool:
+    """Exige que a refutação mencione a entidade própria principal da alegação."""
+    entities = _specific_named_entities(claim)
+    if not entities:
+        return True
+    source_text = _normalized_text(
+        " ".join(f"{source.title} {source.relevant_excerpt}" for source in sources)
+    )
+    return all(entity in source_text for entity in entities)
 
 
 def _evidence_to_dict(ev: Evidence) -> dict[str, Any]:
@@ -610,6 +676,28 @@ class FactCheckService:
         if report.invalid_citations:
             answer.evidence_sufficient = False
             answer.conclusion = EvidenceConclusion.INCONCLUSIVE
+
+        if (
+            answer.conclusion is EvidenceConclusion.CONTRADICTED
+            and not _contradiction_has_entity_anchor(claim, result_sources)
+        ):
+            evidence_by_url = {item.url: item for item in unique_sources(used_evidences)}
+            cited_evidences = [
+                evidence_by_url[url]
+                for url in report.used_urls
+                if url in evidence_by_url
+            ]
+            return self._deep_search_fallback(
+                claim,
+                best_score,
+                cited_evidences,
+                prompt,
+                web_sources=prefetched_web_sources,
+                abstention_explanation=(
+                    "As fontes recuperadas tratam de entidade diferente da alegação; "
+                    "não há evidência suficiente para contradizê-la."
+                ),
+            )
 
         if answer.conclusion is EvidenceConclusion.INCONCLUSIVE or not answer.evidence_sufficient:
             evidence_by_url = {item.url: item for item in unique_sources(used_evidences)}

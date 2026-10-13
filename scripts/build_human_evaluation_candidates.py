@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from qdrant_client import QdrantClient
+from src.rag.qdrant import patch_qdrant_local_compat
 
 
 def _text(payload: dict[str, Any]) -> str:
@@ -37,6 +41,7 @@ def main() -> int:
         raise ValueError(
             "o índice local exige --allow-local-reference-index; consulte docs/REAL_QDRANT_VALIDATION.md"
         )
+    patch_qdrant_local_compat()
     client = (
         QdrantClient(url=args.qdrant_url, timeout=10)
         if args.qdrant_url

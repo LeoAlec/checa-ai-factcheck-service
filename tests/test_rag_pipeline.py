@@ -1,6 +1,7 @@
 import sys
 import types
 import json
+import re
 from types import SimpleNamespace
 
 import pytest
@@ -44,13 +45,14 @@ def service(monkeypatch):
 
     def fake_llm(system, user):
         svc.prompts.append((system, user))
+        source_url = re.search(r"^URL: (https?://\S+)$", user, re.MULTILINE).group(1)
         return json.dumps(
             {
                 "conclusion": "sustentada",
                 "evidence_sufficient": True,
                 "evidence_level": "forte",
                 "explanation": "A evidência resolve a alegação [1].",
-                "source_urls": [],
+                "source_urls": [source_url],
             }
         )
 
