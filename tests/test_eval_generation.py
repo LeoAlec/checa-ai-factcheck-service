@@ -21,6 +21,7 @@ TH = json.loads((ROOT / "evals" / "thresholds.json").read_text())
 
 def test_golden_set_is_well_formed_and_covers_all_types():
     assert {c["type"] for c in CASES} == {"supported", "unsupported", "low_score", "injection"}
+    assert len(CASES) >= 20
     assert len({c["id"] for c in CASES}) == len(CASES)
     for c in CASES:
         assert c["expected_status"] in {"matched", "abstained"} and 0 <= c["score"] <= 1

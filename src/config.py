@@ -82,7 +82,10 @@ CLUSTER_LOW_CONFIDENCE_PENALTY = _env_float("CLUSTER_LOW_CONFIDENCE_PENALTY", 0.
 CLUSTER_HIGH_CONFIDENCE_BONUS = _env_float("CLUSTER_HIGH_CONFIDENCE_BONUS", 0.005)
 
 # ─── LLM ─────────────────────────────────────────────────────────────
+LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "openai").strip().lower()
 LLM_MODEL = os.environ.get("LLM_MODEL", "gpt-4o-mini")
+LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "").strip()
+LLM_API_KEY = os.environ.get("LLM_API_KEY", "").strip()
 LLM_TEMPERATURE = _env_float("LLM_TEMPERATURE", 0.2)
 # Timeout (s) e retries do cliente OpenAI; sem isso uma chamada pendurada trava o worker.
 LLM_TIMEOUT_SECONDS = _env_float("LLM_TIMEOUT_SECONDS", 30.0)

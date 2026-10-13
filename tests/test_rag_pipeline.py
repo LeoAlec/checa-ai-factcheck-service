@@ -561,3 +561,38 @@ def test_llm_client_reused_across_requests(monkeypatch):
     assert service._call_llm("sistema", "primeira") == "Resposta"
     assert service._call_llm("sistema", "segunda") == "Resposta"
     assert constructions == [{"api_key": "test-key", "timeout": fcs.LLM_TIMEOUT_SECONDS, "max_retries": fcs.LLM_MAX_RETRIES}]
+
+
+def test_llm_client_can_use_local_openai_compatible_endpoint(monkeypatch):
+    import openai
+
+    constructions = []
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(
+        create=lambda **kwargs: SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="Resposta"), finish_reason="stop")],
+            usage=None,
+        )
+    )))
+
+    monkeypatch.setattr(openai, "OpenAI", lambda **kwargs: constructions.append(kwargs) or client)
+    monkeypatch.setattr(fcs, "LLM_PROVIDER", "ollama")
+    monkeypatch.setattr(fcs, "LLM_API_KEY", "ollama")
+    monkeypatch.setattr(fcs, "LLM_BASE_URL", "http://host.docker.internal:11434/v1/")
+    service = object.__new__(fcs.FactCheckService)
+
+    assert service._call_llm("sistema", "teste local") == "Resposta"
+    assert constructions == [{
+        "api_key": "ollama",
+        "base_url": "http://host.docker.internal:11434/v1/",
+        "timeout": fcs.LLM_TIMEOUT_SECONDS,
+        "max_retries": fcs.LLM_MAX_RETRIES,
+    }]
+
+
+def test_local_llm_provider_requires_explicit_endpoint(monkeypatch):
+    monkeypatch.setattr(fcs, "LLM_PROVIDER", "ollama")
+    monkeypatch.setattr(fcs, "LLM_BASE_URL", "")
+    service = object.__new__(fcs.FactCheckService)
+
+    with pytest.raises(RuntimeError, match="LLM_BASE_URL"):
+        service._get_llm_client()

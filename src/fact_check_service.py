@@ -18,7 +18,10 @@ from src.config import (
     CONTEXT_SCORE_MARGIN,
     EMBED_MODEL,
     LLM_MAX_RETRIES,
+    LLM_API_KEY,
+    LLM_BASE_URL,
     LLM_MODEL,
+    LLM_PROVIDER,
     LLM_TEMPERATURE,
     LLM_TIMEOUT_SECONDS,
     MAX_CONTEXT_CHARS,
@@ -337,16 +340,24 @@ class FactCheckService:
         if self._llm_client is None:
             import openai
 
-            api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+            if LLM_PROVIDER != "openai" and not LLM_BASE_URL:
+                raise RuntimeError(
+                    "LLM_BASE_URL é obrigatório quando LLM_PROVIDER não é 'openai'."
+                )
+            api_key = LLM_API_KEY or os.environ.get("OPENAI_API_KEY", "").strip()
             if not api_key:
                 raise RuntimeError(
-                    "OPENAI_API_KEY não configurada. Defina a variável de ambiente ou use .env."
+                    "LLM_API_KEY ou OPENAI_API_KEY não configurada. "
+                    "Defina a credencial do provedor de geração no ambiente."
                 )
-            self._llm_client = openai.OpenAI(
+            client_options = dict(
                 api_key=api_key,
                 timeout=LLM_TIMEOUT_SECONDS,
                 max_retries=LLM_MAX_RETRIES,
             )
+            if LLM_BASE_URL:
+                client_options["base_url"] = LLM_BASE_URL
+            self._llm_client = openai.OpenAI(**client_options)
         return self._llm_client
 
     def _call_llm(self, system: str, user: str) -> str:
