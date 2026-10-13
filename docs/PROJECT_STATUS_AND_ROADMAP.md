@@ -165,4 +165,3 @@ elas não foram removidas nem convertidas em aprovação automática.
 - Colocar TF-IDF ou BERTimbau no endpoint.
 - Introduzir NER, NLI ou uma arquitetura multiagente sem evidência de ganho.
 - Alterar os repositórios remotos usados somente como referência.
-
