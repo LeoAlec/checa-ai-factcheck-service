@@ -65,6 +65,7 @@ jobs:
           ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts
 
       - name: Atualiza código e .env na VM e sobe a nova versão
+        id: up
         env:
           HOST: ${{ secrets.AZURE_VM_HOST }}
           VM_USER: ${{ secrets.AZURE_VM_USER }}
@@ -86,6 +87,11 @@ jobs:
           [ -n "$INTERNAL_API_TOKEN" ] || { echo "::error::secret INTERNAL_API_TOKEN não configurado"; exit 1; }
 
           SSH="ssh -i ~/.ssh/id_deploy $VM_USER@$HOST"
+
+          # Imagem em execução antes do deploy (o .env abaixo a sobrescreve): alvo do rollback.
+          PREV_IMAGE="$($SSH 'grep -m1 "^APP_IMAGE=" ~/checa-ai/.env 2>/dev/null | cut -d= -f2-' || true)"
+          echo "PREV_IMAGE=$PREV_IMAGE" >> "$GITHUB_ENV"
+
           AUTH=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
 
           # .env montado a partir dos secrets/variables (nunca fica no repositório).
@@ -126,11 +132,45 @@ jobs:
             && docker image prune -f"
 
       - name: Smoke test
+        id: smoke
         env:
           URL: ${{ vars.APP_URL || format('http://{0}', secrets.AZURE_VM_HOST) }}
+          HOST: ${{ secrets.AZURE_VM_HOST }}
+          VM_USER: ${{ secrets.AZURE_VM_USER }}
         run: |
+          ok=0
           for i in $(seq 1 12); do
-            curl -fsS "$URL/health" && exit 0
+            curl -fsS "$URL/health" && { ok=1; break; }
             sleep 10
           done
-          echo "::error::/health não respondeu após o deploy"; exit 1
+          [ "$ok" = 1 ] || { echo "::error::/health não respondeu após o deploy"; exit 1; }
+
+          # /ready só é alcançável por dentro (não é público): confere Qdrant/coleção/embeddings.
+          # Só avisa: coleção vazia no primeiro deploy não deve derrubar nem reverter a release.
+          ssh -i ~/.ssh/id_deploy "$VM_USER@$HOST" "cd ~/checa-ai && docker compose exec -T app \
+            python -c \"import urllib.request as u; u.urlopen('http://127.0.0.1:8000/ready', timeout=10)\"" \
+            || echo "::warning::/ready falhou: índice Qdrant ausente ou incompatível (rode o workflow index-corpus)"
+
+      # Reverte só a imagem do app para a que rodava antes (APP_IMAGE no .env da VM).
+      # O job continua falhando de propósito: a release nova NÃO está no ar.
+      # Prompts não são afetados (continuam por Release/Langfuse); índice Qdrant idem.
+      - name: Rollback automático para a imagem anterior
+        if: failure() && (steps.up.conclusion == 'failure' || steps.smoke.conclusion == 'failure')
+        env:
+          URL: ${{ vars.APP_URL || format('http://{0}', secrets.AZURE_VM_HOST) }}
+          HOST: ${{ secrets.AZURE_VM_HOST }}
+          VM_USER: ${{ secrets.AZURE_VM_USER }}
+        run: |
+          if [ -z "$PREV_IMAGE" ] || [ "$PREV_IMAGE" = "$IMAGE" ]; then
+            echo "::warning::sem imagem anterior para reverter (primeiro deploy?)"; exit 1
+          fi
+          SSH="ssh -i ~/.ssh/id_deploy $VM_USER@$HOST"
+          $SSH "cd ~/checa-ai && sed -i 's|^APP_IMAGE=.*|APP_IMAGE=$PREV_IMAGE|' .env \
+            && docker compose up -d app"
+          for i in $(seq 1 12); do
+            if curl -fsS "$URL/health"; then
+              echo "::error::deploy de $IMAGE falhou; revertido para $PREV_IMAGE"; exit 1
+            fi
+            sleep 10
+          done
+          echo "::error::deploy falhou e o rollback para $PREV_IMAGE também não ficou saudável"; exit 1
