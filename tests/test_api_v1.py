@@ -198,3 +198,21 @@ async def test_slow_verification_does_not_block_health(client, fake_service):
     finally:
         release.set()
         await pending
+
+
+@pytest.mark.asyncio
+async def test_internal_token_is_enforced_when_configured(client, fake_service, monkeypatch):
+    monkeypatch.setenv("INTERNAL_API_TOKEN", "secret-token")
+    url = "/api/v1/verify"
+    assert (await client.post(url, json={"text": "x"})).status_code == 401
+    wrong = await client.post(url, json={"text": "x"}, headers={"X-Internal-Token": "nope"})
+    assert wrong.status_code == 401
+    ok = await client.post(url, json={"text": "x"}, headers={"X-Internal-Token": "secret-token"})
+    assert ok.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_health_and_ready_do_not_require_internal_token(client, fake_service, monkeypatch):
+    monkeypatch.setenv("INTERNAL_API_TOKEN", "secret-token")
+    assert (await client.get("/health")).status_code == 200
+    assert (await client.get("/ready")).status_code == 200

@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import hmac
 import logging
 import os
 from typing import Literal
 
 from anyio import CapacityLimiter, to_thread
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
 from src.config import COLLECTION_NAME
@@ -43,7 +44,25 @@ class VerifyResponse(BaseModel):
     sources: list[VerificationSource]
 
 
-@router.post("/api/v1/verify", response_model=VerifyResponse)
+def require_internal_token(x_internal_token: str | None = Header(default=None)) -> None:
+    """Defesa em profundidade: com INTERNAL_API_TOKEN definido, exige o header do backend.
+
+    Sem a variável (dev/testes locais) a rota segue aberta; em produção o deploy a exige.
+    """
+    expected = os.environ.get("INTERNAL_API_TOKEN", "")
+    if not expected:
+        return
+    if not x_internal_token or not hmac.compare_digest(
+        x_internal_token.encode(), expected.encode()
+    ):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+@router.post(
+    "/api/v1/verify",
+    response_model=VerifyResponse,
+    dependencies=[Depends(require_internal_token)],
+)
 async def verify(body: VerifyRequest) -> VerifyResponse:
     try:
         service = await to_thread.run_sync(FactCheckService.get_instance)

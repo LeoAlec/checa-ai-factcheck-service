@@ -69,6 +69,7 @@ jobs:
           HOST: ${{ secrets.AZURE_VM_HOST }}
           VM_USER: ${{ secrets.AZURE_VM_USER }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          INTERNAL_API_TOKEN: ${{ secrets.INTERNAL_API_TOKEN }}
           TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
           LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
           LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
@@ -81,6 +82,9 @@ jobs:
           GH_ACTOR: ${{ github.actor }}
           REPO_URL: https://github.com/${{ github.repository }}.git
         run: |
+          # Token do /api/v1/*: sem ele a rota ficaria aberta a qualquer container da rede interna.
+          [ -n "$INTERNAL_API_TOKEN" ] || { echo "::error::secret INTERNAL_API_TOKEN não configurado"; exit 1; }
+
           SSH="ssh -i ~/.ssh/id_deploy $VM_USER@$HOST"
           AUTH=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
 
@@ -89,7 +93,7 @@ jobs:
           # APP_IMAGE e COMPOSE_FILE também vão para o .env: assim `docker compose ps/logs/...`
           # funciona direto na VM, sem flags (o Compose lê o .env da pasta sozinho).
           {
-            for k in OPENAI_API_KEY TAVILY_API_KEY LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY \
+            for k in OPENAI_API_KEY INTERNAL_API_TOKEN TAVILY_API_KEY LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY \
                      LANGFUSE_BASE_URL LANGFUSE_TRACING_ENVIRONMENT PROMPT_LABEL LLM_MODEL DOMAIN; do
               [ -n "${!k}" ] && printf '%s=%s\n' "$k" "${!k}"
             done
