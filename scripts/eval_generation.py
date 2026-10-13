@@ -9,7 +9,9 @@ Métricas (limites em evals/thresholds.json; violação → exit 1):
   faithfulness         juiz LLM: só afirma o que está nos laudos (casos "supported")
   abstention_accuracy  status esperado (matched/abstained): score abaixo do limiar OU
                        laudos que não tratam da alegação (o modelo deve se abster)
-  structured_output    fração de respostas no schema {texto, fontes_usadas}
+  structured_output    fração de respostas no schema de decisão evidencial
+                       {conclusion, evidence_sufficient, evidence_level,
+                        explanation, source_urls}
   raw_url_grounded     links da saída CRUA do modelo, antes da sanitização
   url_grounded         links da resposta FINAL (deve ser 100%)
   injection_leaks      respostas que repetem o canário injetado nos laudos
@@ -25,6 +27,7 @@ import argparse
 import json
 import os
 import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Callable
@@ -41,6 +44,7 @@ except ImportError:
     pass
 
 from src import fact_check_service as fcs  # noqa: E402
+from src.config import LLM_BASE_URL, LLM_MODEL, LLM_PROVIDER  # noqa: E402
 from src.rag.prompts import PROMPT_VERSION  # noqa: E402
 
 JUDGE_MODEL = os.environ.get("EVAL_JUDGE_MODEL", "gpt-4o-mini")
@@ -118,7 +122,9 @@ def make_judge() -> Callable[[dict, str], dict]:
 
 def run_case(case: dict, judge: Callable[[dict, str], dict], service=None) -> dict:
     svc = service or build_service(case)
+    started_at = time.perf_counter()
     result = svc.verify_claim(case["query"])
+    latency_seconds = time.perf_counter() - started_at
     answer = result["counter_narrative"]
     g = result.get("guardrails") or {}
     row = {
@@ -126,6 +132,7 @@ def run_case(case: dict, judge: Callable[[dict, str], dict], service=None) -> di
         "status": result["status"], "expected_status": case["expected_status"],
         "status_ok": result["status"] == case["expected_status"],
         "answer": answer,
+        "latency_seconds": round(latency_seconds, 4),
     }
     if result["status"] == "matched":
         allowed = {s["url"] for s in result["sources"]}
@@ -154,6 +161,8 @@ def _rate(values: list[bool]) -> float | None:
 def compute_metrics(rows: list[dict]) -> dict:
     matched = [r for r in rows if r["status"] == "matched"]
     supported = [r for r in matched if r["type"] in ("supported", "injection")]
+    latencies = sorted(r["latency_seconds"] for r in rows)
+    p95_index = max(0, int(len(latencies) * 0.95 + 0.9999) - 1)
     return {
         "faithfulness": _rate([r["verdict"]["faithful"] for r in supported]),
         "abstention_accuracy": _rate([r["status_ok"] for r in rows]),
@@ -161,6 +170,8 @@ def compute_metrics(rows: list[dict]) -> dict:
         "raw_url_grounded": _rate([r["raw_grounded"] for r in matched]),
         "url_grounded": _rate([r["grounded"] for r in matched]),
         "injection_leaks": sum(1 for r in rows if r.get("leaked")),
+        "latency_mean_seconds": round(sum(latencies) / len(latencies), 4),
+        "latency_p95_seconds": round(latencies[p95_index], 4),
     }
 
 
@@ -177,7 +188,7 @@ def check_thresholds(metrics: dict, th: dict) -> list[str]:
 
 def markdown_summary(metrics: dict, th: dict, rows: list[dict], failures: list[str]) -> str:
     lines = [
-        f"## Eval de geração — prompt `{PROMPT_VERSION}`",
+        f"## Eval de geração — `{LLM_PROVIDER}:{LLM_MODEL}` — prompt `{PROMPT_VERSION}`",
         "",
         "| Métrica | Valor | Limite |",
         "|---|---|---|",
@@ -185,6 +196,8 @@ def markdown_summary(metrics: dict, th: dict, rows: list[dict], failures: list[s
     for name in ("faithfulness", "abstention_accuracy", "structured_output", "raw_url_grounded", "url_grounded"):
         lines.append(f"| {name} | {metrics[name]} | ≥ {th[name + '_min']} |")
     lines.append(f"| injection_leaks | {metrics['injection_leaks']} | ≤ {th['injection_leaks_max']} |")
+    lines.append(f"| latency_mean_seconds | {metrics['latency_mean_seconds']} | informativo |")
+    lines.append(f"| latency_p95_seconds | {metrics['latency_p95_seconds']} | informativo |")
     lines += ["", "**Resultado:** " + ("❌ FALHOU" if failures else "✅ passou")]
     lines += [f"- {f}" for f in failures]
     bad = [r for r in rows if not r["status_ok"] or r.get("leaked") or not r.get("verdict", {}).get("faithful", True)]
@@ -212,7 +225,15 @@ def main() -> int:
 
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(
-        json.dumps({"prompt_version": PROMPT_VERSION, "metrics": metrics, "failures": failures, "cases": rows},
+        json.dumps({
+            "prompt_version": PROMPT_VERSION,
+            "llm_provider": LLM_PROVIDER,
+            "llm_model": LLM_MODEL,
+            "llm_base_url": LLM_BASE_URL or None,
+            "metrics": metrics,
+            "failures": failures,
+            "cases": rows,
+        },
                    ensure_ascii=False, indent=2),
         encoding="utf-8",
     )

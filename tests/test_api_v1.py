@@ -33,8 +33,18 @@ def fake_service(monkeypatch):
 
     service.verify_claim_for_backend = verify
     service.verify_claim = lambda text, *, session_id=None: {
-        "status": "abstained", "score": 0.1, "evidence": None,
-        "sources": [], "counter_narrative": "Sem checagem.",
+        "status": "abstained",
+        "score": 0.1,
+        "evidence": None,
+        "counter_narrative": "Sem checagem.",
+        "claim": text,
+        "conclusion": "inconclusiva",
+        "evidence_sufficient": False,
+        "evidence_level": "ausente",
+        "explanation": "Sem checagem.",
+        "sources": [],
+        "probabilistic_assessment": None,
+        "trace_id": None,
     }
     monkeypatch.setattr(FactCheckService, "get_instance", lambda: service)
     return service, result
@@ -172,10 +182,12 @@ async def test_slow_embedding_dimension_does_not_block_health(client, fake_servi
 
 
 @pytest.mark.asyncio
-async def test_legacy_route_shape_is_preserved(client, fake_service):
+async def test_legacy_debunk_route_shape_is_preserved(client, fake_service):
     response = await client.post("/api/debunk", json={"message": "alegação longa"})
     assert response.status_code == 200
-    assert set(response.json()) == {"status", "score", "evidence", "sources", "counter_narrative", "trace_id"}
+    assert set(response.json()) == {
+        "status", "score", "evidence", "sources", "counter_narrative", "trace_id"
+    }
 
 
 @pytest.mark.asyncio

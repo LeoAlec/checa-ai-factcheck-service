@@ -9,10 +9,32 @@ LOCK = json.loads((Path(prompts.__file__).parent / "prompts.lock.json").read_tex
 
 
 def test_prompt_text_change_requires_version_bump_and_lock_update():
-    assert prompts.content_hash() == LOCK["sha256"] and prompts.PROMPT_VERSION == LOCK["version"], (
+    assert (
+        LOCK["schema_version"] == 2
+        and prompts.content_hash() == LOCK["sha256"]
+        and prompts.prompt_manifest() == LOCK["prompts"]
+    ), (
         "O texto de src/rag/prompts.py mudou. Incremente PROMPT_VERSION e rode "
         "`python scripts/sync_prompts.py --write-lock`."
     )
+
+
+def test_lock_hash_covers_claim_analysis_prompts(monkeypatch):
+    original_hash = prompts.content_hash()
+    monkeypatch.setattr(
+        prompts,
+        "CLAIM_ANALYSIS_SYSTEM_PROMPT",
+        prompts.CLAIM_ANALYSIS_SYSTEM_PROMPT + "\nMudança de teste.",
+    )
+
+    assert prompts.content_hash() != original_hash
+
+
+def test_each_prompt_has_an_independent_name_version_and_hash():
+    manifest = prompts.prompt_manifest()
+
+    assert set(manifest) == {"evidence-flow", "claim-analysis"}
+    assert all(item["version"] and len(item["sha256"]) == 64 for item in manifest.values())
 
 
 def test_user_prompt_has_required_variables():

@@ -62,6 +62,12 @@ Thumbs.db
 .env
 reports/
 
+# Avaliação humana: somente templates são versionados.
+data/evaluation/*
+!data/evaluation/human_review_cases.template.jsonl
+!data/evaluation/human_review_template.csv
+data/embedding_cache/
+
 # Isolated implementation workspaces
 .worktrees/
 .superpowers/

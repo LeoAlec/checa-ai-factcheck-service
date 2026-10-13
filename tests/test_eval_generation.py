@@ -21,6 +21,7 @@ TH = json.loads((ROOT / "evals" / "thresholds.json").read_text())
 
 def test_golden_set_is_well_formed_and_covers_all_types():
     assert {c["type"] for c in CASES} == {"supported", "unsupported", "low_score", "injection"}
+    assert len(CASES) >= 20
     assert len({c["id"] for c in CASES}) == len(CASES)
     for c in CASES:
         assert c["expected_status"] in {"matched", "abstained"} and 0 <= c["score"] <= 1
@@ -38,8 +39,24 @@ def _run(case, llm):
 def _good(case):
     e = case["evidences"][-1 if case["type"] == "injection" else 0]  # injetado vem primeiro
     if case["type"] == "unsupported":
-        return json.dumps({"laudos_tratam_alegacao": False, "texto": "Sem checagem.", "fontes_usadas": []})
-    return json.dumps({"laudos_tratam_alegacao": True, "texto": f"Falso [1].\nFonte: {e['dominio']} — Leia mais em: {e['url']}", "fontes_usadas": [e["url"]]})
+        return json.dumps(
+            {
+                "conclusion": "inconclusiva",
+                "evidence_sufficient": False,
+                "evidence_level": "ausente",
+                "explanation": "Sem checagem.",
+                "source_urls": [],
+            }
+        )
+    return json.dumps(
+        {
+            "conclusion": "contradita",
+            "evidence_sufficient": True,
+            "evidence_level": "forte",
+            "explanation": f"Falso [1].\nFonte: {e['dominio']} — Leia mais em: {e['url']}",
+            "source_urls": [e["url"]],
+        }
+    )
 
 
 def test_perfect_model_passes_all_thresholds():
@@ -57,7 +74,15 @@ def test_low_score_cases_abstain_by_config_threshold():
 
 def test_injection_canary_leak_is_detected_and_fails_gate():
     case = next(c for c in CASES if c["id"] == "inj-medium")  # risco médio: chega ao LLM
-    leaky = lambda c: json.dumps({"texto": f"{c['canary']}", "fontes_usadas": []})  # noqa: E731
+    leaky = lambda c: json.dumps(  # noqa: E731
+        {
+            "conclusion": "contradita",
+            "evidence_sufficient": True,
+            "evidence_level": "forte",
+            "explanation": f"{c['canary']} [1]",
+            "source_urls": [c["evidences"][1]["url"]],
+        }
+    )
     rows = [_run(case, leaky)]
     metrics = ev.compute_metrics(rows)
     assert metrics["injection_leaks"] == 1
@@ -74,7 +99,15 @@ def test_high_risk_injection_never_reaches_llm_context():
 
 
 def test_invented_url_lowers_raw_grounding_but_final_stays_clean():
-    bad = lambda c: json.dumps({"texto": "Veja https://fake.example/x", "fontes_usadas": ["https://fake.example/x"]})  # noqa: E731
+    bad = lambda c: json.dumps(  # noqa: E731
+        {
+            "conclusion": "contradita",
+            "evidence_sufficient": True,
+            "evidence_level": "forte",
+            "explanation": "Veja https://fake.example/x [1]",
+            "source_urls": ["https://fake.example/x"],
+        }
+    )
     row = _run(CASES[0], bad)
     assert row["raw_grounded"] is False and row["grounded"] is True
 

@@ -6,7 +6,7 @@
 		reverse_proxy app:8000
 	}
 
-	# UI web, /api/debunk, /api/feedback, /api/v1/* e /docs não são públicos: gastam
+	# UI web, /api/debunk, /api/v2/debunk, /api/feedback, /api/v1/* e /docs não são públicos: gastam
 	# OPENAI/TAVILY sem autenticação. O backend chega ao app pela rede interna
 	# checa-ai-ml-shared (http://ml-api:8000), sem passar pelo Caddy.
 	handle {
