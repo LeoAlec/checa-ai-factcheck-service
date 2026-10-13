@@ -58,6 +58,8 @@ está em [Smoke E2E real](docs/LIVE_E2E.md).
 7. Resposta com conclusão, suficiência, nível, explicação e fontes usadas.
 
 Veja [Arquitetura](docs/ARCHITECTURE.md) e [Contrato da API](docs/API_CONTRACT.md).
+O estado consolidado, os resultados das validações e o plano das próximas fases
+estão em [Estado e roadmap do projeto](docs/PROJECT_STATUS_AND_ROADMAP.md).
 
 ## Avaliação offline de classificadores
 
