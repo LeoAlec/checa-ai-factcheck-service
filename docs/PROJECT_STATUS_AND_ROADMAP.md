@@ -34,17 +34,17 @@ calibração definidos na avaliação externa.
 
 ```mermaid
 flowchart TD
-    A["Mensagem, notícia ou URL"] --> B["Validação, moderação e proteção contra injection"]
+    A["Mensagem, notícia ou URL"] --> B["Validação, moderação e proteção contra injection<br/>FastAPI · Pydantic · OpenAI Moderation · regras Python"]
     B --> C{"Entrada é uma URL isolada?"}
-    C -- Sim --> C1["Busca contexto inicial da página"]
-    C -- Não --> D["LLM identifica a alegação verificável"]
+    C -- Sim --> C1["Busca contexto inicial da página<br/>Tavily API · tavily-python"]
+    C -- Não --> D["LLM identifica a alegação verificável<br/>OpenAI · JSON estruturado · Langfuse"]
     C1 --> D
     D --> E{"Alegação clara e contexto suficiente?"}
     E -- Não --> I["Resultado inconclusivo"]
-    E -- Sim --> F["Busca no Qdrant pela alegação"]
+    E -- Sim --> F["Busca no Qdrant pela alegação<br/>Qdrant · OpenAI Embeddings"]
     F --> G{"Laudos relevantes e suficientes?"}
-    G -- Sim --> J["LLM compara alegação e trechos recuperados"]
-    G -- Não --> H["Busca web com prioridade para checadoras e fontes confiáveis"]
+    G -- Sim --> J["LLM compara alegação e trechos recuperados<br/>OpenAI · JSON estruturado · Langfuse"]
+    G -- Não --> H["Busca web com prioridade para checadoras e fontes confiáveis<br/>Tavily API · validação Pydantic"]
     H --> H1{"Fontes verificáveis e pertinentes?"}
     H1 -- Sim --> J
     H1 -- Não --> I
@@ -54,11 +54,11 @@ flowchart TD
     L -- Sustentam --> M["Sustentada"]
     L -- Contradizem --> N["Contradita"]
     L -- Insuficientes ou divergentes --> I
-    M --> O["Grounding, validação das URLs e moderação da saída"]
+    M --> O["Grounding, validação das URLs e moderação da saída<br/>Pydantic · regras Python · OpenAI Moderation"]
     N --> O
     I --> O
-    O --> P["Relatório com alegação, conclusão, explicação, trechos e fontes"]
-    P --> Q["Interface, trace e feedback para avaliação"]
+    O --> P["Relatório com alegação, conclusão, explicação, trechos e fontes<br/>FastAPI · Pydantic"]
+    P --> Q["Interface, trace e feedback para avaliação<br/>Jinja2 · HTML/CSS/JavaScript · Langfuse"]
 ```
 
 Estados operacionais e conclusões permanecem separados:
