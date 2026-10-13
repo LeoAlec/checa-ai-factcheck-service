@@ -40,6 +40,6 @@ def perform_web_search(query: str, max_results: int = 5) -> List[Dict[str, str]]
             
         return results
 
-    except Exception as e:
-        print(f"Erro ao realizar busca via Tavily: {e}")
+    except Exception:
+        print("Erro ao realizar busca via Tavily.")
         return []

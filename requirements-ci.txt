@@ -1,5 +1,6 @@
 # Dependências mínimas do CI (sem torch/sentence-transformers/jupyter).
 pytest
+pytest-asyncio
 pydantic
 fastapi
 httpx

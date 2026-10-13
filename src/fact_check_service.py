@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import logging
 import os
-import logging
+import re
+from contextvars import ContextVar
+from urllib.parse import urlsplit
 
 from src import observability
 from src.config import (
@@ -61,6 +63,51 @@ from src.safety.validator import validate_output
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("checa-ai.safety")
 
+_BACKEND_SYSTEM_PROMPT = """\
+Você verifica alegações usando somente os laudos fornecidos. Escreva uma
+contranarrativa clara, em português, de até {max_chars} caracteres para WhatsApp.
+Cite cada laudo usado pelo número entre colchetes, como [1]. Não inclua
+links nem uma lista de fontes: a API acrescentará as fontes citadas.
+Não invente fatos ou citações.
+"""
+
+_BACKEND_USER_PROMPT = """\
+Alegação: {query}
+
+Laudos de checagem:
+{contexto}
+
+Responda apenas com a contranarrativa curta e suas citações numeradas.
+"""
+
+_NARRATIVE_LIMIT = 500
+_REPLY_FIXED_RESERVE = 350
+_MIN_NARRATIVE_CHARS = 80
+_CITATION_PATTERN = re.compile(r"\[(\d+)\]")
+_CHUNK_CITATION_PATTERN = re.compile(r"\[(\d+),\s*trecho\s+\d+\]", re.IGNORECASE)
+_URL_PATTERN = re.compile(r"https?://[^\s\)\]\"'<>]+")
+_generation_version: ContextVar[str | None] = ContextVar("generation_version", default=None)
+
+
+class VerificationGenerationError(RuntimeError):
+    """A geração não produziu um resultado fundamentado para o contrato v1."""
+
+
+def _safe_source_url(url: str) -> bool:
+    try:
+        parsed = urlsplit(url)
+        port = parsed.port
+        return (
+            parsed.scheme in {"http", "https"}
+            and bool(parsed.hostname)
+            and (port is None or port > 0)
+            and parsed.username is None
+            and parsed.password is None
+            and not any(char.isspace() for char in url)
+        )
+    except (TypeError, ValueError):
+        return False
+
 
 def _evidence_to_dict(ev: Evidence) -> dict:
     return {
@@ -99,6 +146,7 @@ class FactCheckService:
     def __init__(self) -> None:
         self._embedder = get_embedding_provider()
         self._qdrant = get_qdrant_client()
+        self._llm_client = None
 
     @classmethod
     def get_instance(cls) -> "FactCheckService":
@@ -149,8 +197,8 @@ class FactCheckService:
             blocked = [ev for ev in candidates if ev.injection_risk == "high"]
             if blocked:
                 logger.warning(
-                    "Guardrail: %d chunk(s) com prompt injection excluídos: %s",
-                    len(blocked), sorted({ev.url for ev in blocked}),
+                    "Guardrail: %d chunk(s) com prompt injection excluídos",
+                    len(blocked),
                 )
             evidences = with_cluster_rerank([ev for ev in candidates if ev.injection_risk != "high"])
             selected = select_evidences(
@@ -207,7 +255,7 @@ class FactCheckService:
             {"role": "user", "content": user},
         ]
         bundle = current_prompt.get()
-        prompt_version = bundle.version if bundle else PROMPT_VERSION
+        prompt_version = _generation_version.get() or (bundle.version if bundle else PROMPT_VERSION)
         with observability.observation(
             "llm-generation",
             as_type="generation",
@@ -247,37 +295,34 @@ class FactCheckService:
         """
         from src.config import DEEP_SEARCH_SYSTEM_PROMPT, DEEP_SEARCH_USER_PROMPT
 
-        logger.info("Iniciando DeepSearch para query: %s", query)
-        
+        logger.info("Iniciando DeepSearch")
+
         # 1. Busca Web
         web_results = perform_web_search(query)
         logger.info("Resultados da web encontrados: %d", len(web_results))
-        
+
         if not web_results:
             # Se nem a web retornou nada, voltamos para a abstenção clássica
             return self._abstention(score, evidences)
 
         # Formata resultados para o prompt
         formatted_results = "\n\n".join([
-            f"Fonte: {r['title']} ({r['url']})\nConteúdo: {r['snippet']}" 
+            f"Fonte: {r['title']} ({r['url']})\nConteúdo: {r['snippet']}"
             for r in web_results
         ])
-        
-        # DEBUG: Print dos resultados reais da web para transparência
-        logger.info("--- RESULTADOS REAIS DA WEB ---\n%s\n--------------------------------", formatted_results)
-        
+
         user_prompt = DEEP_SEARCH_USER_PROMPT.format(
-            query=query, 
+            query=query,
             web_results=formatted_results
         )
-        
+
         # 2. Geração de síntese cautelosa
         # Prompt do DeepSearch é outro: não atribuir a versão do prompt "debunk" a esta generation.
         token = current_prompt.set(None)
         try:
             narrative = self._call_llm_text(DEEP_SEARCH_SYSTEM_PROMPT, user_prompt)
-        except Exception as e:
-            logger.error("Erro ao gerar síntese DeepSearch: %s", e)
+        except Exception:
+            logger.error("Erro ao gerar síntese DeepSearch")
             return self._abstention(score, evidences)
         finally:
             current_prompt.reset(token)
@@ -444,6 +489,159 @@ class FactCheckService:
             "counter_narrative": counter_narrative,
             "guardrails": report.to_dict(),
         }
+
+    def verify_claim_for_backend(self, text: str) -> dict:
+        """Return the grounded, compact v1 result consumed by the backend."""
+        with observability.request_trace(
+            "verify-v1",
+            input=text,
+            version="verify-v1",
+            tags=["prompt:verify-v1", f"llm:{LLM_MODEL}", f"corpus:{corpus_version()}"],
+            metadata={"collection": COLLECTION_NAME, "threshold": SIMILARITY_THRESHOLD},
+        ) as trace:
+            result = self._verify_claim_for_backend(text)
+            trace.update(
+                output=result["counter_narrative"],
+                metadata={"verdict": result["verdict"], "top_score": result["similarity_score"]},
+            )
+            return result
+
+    def _verify_claim_for_backend(self, text: str) -> dict:
+        mod_result = check_moderation(text)
+        if not mod_result.is_safe:
+            logger.warning("Blocked toxic v1 input: category=%s", mod_result.category)
+            return self._backend_result("blocked", None, SAFE_REFUSAL_MESSAGE)
+        inj_result = check_injection(text)
+        if not inj_result.is_safe:
+            logger.warning("Blocked v1 injection: pattern=%s", inj_result.pattern)
+            return self._backend_result("blocked", None, SAFE_INJECTION_REFUSAL_MESSAGE)
+
+        evidences = self._retrieve(text)
+        best_score = max((ev.score for ev in evidences), default=0.0)
+        result = self._backend_result("insufficient_evidence", best_score)
+        if best_score < SIMILARITY_THRESHOLD:
+            return self._backend_fallback(text, best_score, evidences)
+
+        selected_sources: list[Evidence] = []
+        selected_urls: set[str] = set()
+        source_chars = 0
+        max_source_chars = 1000 - _REPLY_FIXED_RESERVE - _MIN_NARRATIVE_CHARS
+        for ev in unique_sources(evidences):
+            if not _safe_source_url(ev.url):
+                continue
+            additional = 0 if ev.url in selected_urls else len(ev.url) + bool(selected_urls)
+            if source_chars + additional > max_source_chars:
+                continue
+            selected_sources.append(ev)
+            selected_urls.add(ev.url)
+            source_chars += additional
+            if len(selected_sources) == 2:
+                break
+        if not selected_sources or not any(
+            ev.score >= SIMILARITY_THRESHOLD for ev in selected_sources
+        ):
+            raise VerificationGenerationError("nenhuma fonte válida cabe na resposta")
+
+        narrative_limit = min(
+            _NARRATIVE_LIMIT, 1000 - _REPLY_FIXED_RESERVE - source_chars
+        )
+        selected_ids = {ev.document_id for ev in selected_sources}
+        selected = [ev for ev in evidences if ev.document_id in selected_ids]
+        context, used = build_context(selected, MAX_CONTEXT_CHARS)
+        prompt = _BACKEND_USER_PROMPT.format(query=text, contexto=context)
+        system_prompt = _BACKEND_SYSTEM_PROMPT.format(max_chars=narrative_limit)
+        token = _generation_version.set("verify-v1")
+        try:
+            raw = self._call_llm(system_prompt, prompt)
+        finally:
+            _generation_version.reset(token)
+        answer, _ = parse_answer(raw)
+        if not answer.laudos_tratam_alegacao:
+            return self._backend_fallback(text, best_score, used)
+        narrative = answer.texto.strip()
+        if len(narrative) > narrative_limit:
+            condensation_prompt = (
+                f"Reduza o texto a no máximo {narrative_limit} caracteres, "
+                "mantendo somente fatos dos laudos e as citações numeradas. "
+                f"Responda apenas com o texto reduzido.\n\n{narrative}"
+            )
+            token = _generation_version.set("verify-v1")
+            try:
+                raw = self._call_llm(system_prompt, condensation_prompt)
+            finally:
+                _generation_version.reset(token)
+            answer, _ = parse_answer(raw)
+            if not answer.laudos_tratam_alegacao:
+                return self._backend_fallback(text, best_score, used)
+            narrative = answer.texto.strip()
+        narrative = _CHUNK_CITATION_PATTERN.sub(r"[\1]", narrative)
+        if len(narrative) > narrative_limit:
+            raise VerificationGenerationError("contranarrativa excede o tamanho permitido")
+
+        cited = {int(number) for number in _CITATION_PATTERN.findall(narrative)}
+        if not cited or any(number < 1 or number > len(used) for number in cited):
+            raise VerificationGenerationError("citação sem fonte recuperada")
+
+        sources = []
+        seen_urls: set[str] = set()
+        source_numbers: dict[str, int] = {}
+        citation_numbers: dict[int, int] = {}
+        for number, ev in enumerate(used, 1):
+            if number not in cited:
+                continue
+            if not _safe_source_url(ev.url):
+                raise VerificationGenerationError("fonte citada possui URL inválida")
+            if ev.url not in seen_urls:
+                sources.append({"title": ev.titulo, "domain": ev.dominio, "url": ev.url})
+                seen_urls.add(ev.url)
+                source_numbers[ev.url] = len(sources)
+            citation_numbers[number] = source_numbers[ev.url]
+        allowed_urls = seen_urls
+        narrative_urls = {url.rstrip(".,;:!?") for url in _URL_PATTERN.findall(narrative)}
+        reported_urls: set[str] = set()
+        for reference in answer.fontes_usadas:
+            numbered = _CITATION_PATTERN.fullmatch(reference)
+            if numbered or reference.isdecimal():
+                number = int(numbered.group(1) if numbered else reference)
+                if number not in citation_numbers:
+                    raise VerificationGenerationError("fonte sem citação recuperada")
+                reported_urls.add(used[number - 1].url)
+            else:
+                reported_urls.add(reference)
+        if narrative_urls - allowed_urls or reported_urls - allowed_urls:
+            raise VerificationGenerationError("URL sem fonte recuperada")
+        narrative = _CITATION_PATTERN.sub(
+            lambda match: f"[{citation_numbers[int(match.group(1))]}]", narrative
+        )
+
+        val_result = validate_output(narrative)
+        if not val_result.is_safe:
+            logger.error("Blocked harmful v1 output: category=%s", val_result.category)
+            return self._backend_result(
+                "blocked", best_score,
+                "Desculpe, mas a resposta gerada não atende aos nossos critérios de segurança e não pode ser exibida.",
+            )
+
+        result.update(verdict="matched", counter_narrative=narrative, sources=sources)
+        return result
+
+    @staticmethod
+    def _backend_result(verdict: str, score: float | None, narrative: str | None = None) -> dict:
+        return {
+            "schema_version": 1,
+            "verdict": verdict,
+            "similarity_score": round(score, 4) if score is not None else None,
+            "counter_narrative": narrative,
+            "sources": [],
+        }
+
+    def _backend_fallback(self, text: str, score: float, evidences: list[Evidence]) -> dict:
+        result = self._deep_search_fallback(text, score, evidences)
+        if result["status"] == "deep_searched":
+            return self._backend_result("deep_searched", score, result["counter_narrative"])
+        if result["status"] == "blocked":
+            return self._backend_result("blocked", result["score"], result["counter_narrative"])
+        return self._backend_result("insufficient_evidence", score)
 
     @staticmethod
     def _score_result(trace_id: str | None, result: dict) -> None:

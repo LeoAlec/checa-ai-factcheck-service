@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+jinja2
+qdrant-client
+openai
+python-dotenv
+tavily-python
+langfuse>=4,<5
