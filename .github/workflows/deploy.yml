@@ -106,6 +106,16 @@ jobs:
           # Login no GHCR (o token só vale durante o job; basta para o pull imediato).
           echo "$GH_TOKEN" | $SSH "docker login ghcr.io -u $GH_ACTOR --password-stdin"
 
+          # Rede interna compartilhada com o checa-ai-backend (idempotente). --internal: sem saída
+          # para a internet; app e worker têm outras redes para isso. Se já existir sem
+          # --internal, só avisa (recriar exige desanexar os containers).
+          $SSH 'net=checa-ai-ml-shared
+            if ! docker network inspect $net >/dev/null 2>&1; then
+              docker network create --internal $net
+            elif [ "$(docker network inspect -f "{{.Internal}}" $net)" != true ]; then
+              echo "::warning::rede $net existe sem --internal"
+            fi'
+
           $SSH "cd ~/checa-ai && rm -f .image.env \
             && docker compose pull app \
             && docker compose up -d --remove-orphans \

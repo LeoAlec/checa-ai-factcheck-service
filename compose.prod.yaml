@@ -1,4 +1,5 @@
 # Stack de produção (VM Azure): Caddy (HTTPS) → app → Qdrant (rede interna).
+# /api/v1/* é bloqueado no Caddy; o backend acessa o app via rede checa-ai-ml-shared.
 # Usado por .github/workflows/deploy.yml; a imagem vem do GHCR via APP_IMAGE.
 services:
   caddy:
@@ -23,6 +24,10 @@ services:
     env_file: .env
     environment:
       QDRANT_URL: http://qdrant:6333
+    networks:
+      default: {}
+      shared:
+        aliases: [ml-api]   # o worker do checa-ai-backend chama http://ml-api:8000
     depends_on:
       qdrant:
         condition: service_healthy
@@ -46,6 +51,13 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+
+networks:
+  # Rede interna compartilhada com o backend (criada no deploy com --internal:
+  # sem saída para a internet e sem portas publicadas; só app e worker entram nela).
+  shared:
+    external: true
+    name: checa-ai-ml-shared
 
 volumes:
   qdrant_storage:
