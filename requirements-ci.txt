@@ -13,5 +13,7 @@ python-dotenv
 pandas
 numpy
 scikit-learn
+snowballstemmer==3.1.1
+openpyxl
 tqdm
 tavily-python
