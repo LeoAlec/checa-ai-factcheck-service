@@ -325,6 +325,32 @@ def test_v1_uses_deep_search_below_threshold(service, monkeypatch):
     assert result["counter_narrative"] == "Síntese de teste."
 
 
+def test_v1_deep_search_rewrites_oversized_narrative(service, monkeypatch):
+    monkeypatch.setattr(fcs, "perform_web_search", lambda query: [
+        {"title": "Web", "url": "https://example.com", "snippet": "Trecho público"}
+    ])
+    replies = iter(["A" * 956, "B" * 900])
+    monkeypatch.setattr(service, "_call_llm_text", lambda system, user: next(replies))
+
+    result = service.verify_claim_for_backend("alegação curta")
+
+    assert result["verdict"] == "deep_searched"
+    assert result["counter_narrative"] == "B" * 900
+    assert len("Pesquisa adicional (sem checagem conclusiva)\n" + result["counter_narrative"]) == 945
+
+
+def test_v1_deep_search_abstains_if_rewrite_is_still_oversized(service, monkeypatch):
+    monkeypatch.setattr(fcs, "perform_web_search", lambda query: [
+        {"title": "Web", "url": "https://example.com", "snippet": "Trecho público"}
+    ])
+    monkeypatch.setattr(service, "_call_llm_text", lambda system, user: "A" * 956)
+
+    result = service.verify_claim_for_backend("alegação curta")
+
+    assert result["verdict"] == "insufficient_evidence"
+    assert result["counter_narrative"] is None
+
+
 def test_v1_uses_deep_search_after_model_abstention(service, monkeypatch):
     service.hits = [hit("a", 0.90)]
     service._call_llm = lambda system, user: json.dumps({
