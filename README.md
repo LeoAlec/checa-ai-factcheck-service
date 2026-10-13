@@ -319,6 +319,12 @@ Se mudar o texto local, incremente `PROMPT_VERSION` e atualize o lock (ver CI/CD
 > Ao trocar `LLM_MODEL`, confira
 > em Langfuse > Settings > Models se o preço do modelo está cadastrado (senão o custo fica vazio).
 
+## Estado do projeto
+
+O fluxo implementado, as validações realizadas, as limitações conhecidas e as
+próximas etapas estão consolidados no
+[roadmap do serviço](docs/PROJECT_STATUS_AND_ROADMAP.md).
+
 ## Tecnologias Utilizadas
 
 | Camada | Tecnologia | Papel |
