@@ -386,6 +386,43 @@ def test_v1_uses_deep_search_below_threshold(service, monkeypatch):
     assert "A evidência externa resolve a alegação" in result["counter_narrative"]
 
 
+def test_v1_deep_search_rewrites_oversized_narrative(service, monkeypatch):
+    monkeypatch.setattr(fcs, "perform_web_search", lambda query: [
+        {"title": "Web", "url": "https://example.com", "snippet": "Trecho público"}
+    ])
+    replies = iter(
+        [
+            v1_answer("A" * 956, source_urls=["https://example.com"]),
+            v1_answer("B" * 800, source_urls=["https://example.com"]),
+        ]
+    )
+    monkeypatch.setattr(service, "_call_llm_text", lambda system, user: next(replies))
+
+    result = service.verify_claim_for_backend("alegação curta")
+
+    assert result["verdict"] == "deep_searched"
+    assert result["counter_narrative"].startswith("B" * 800)
+    assert len(result["counter_narrative"]) <= fcs._DEEP_SEARCH_NARRATIVE_LIMIT
+
+
+def test_v1_deep_search_abstains_if_rewrite_is_still_oversized(service, monkeypatch):
+    monkeypatch.setattr(fcs, "perform_web_search", lambda query: [
+        {"title": "Web", "url": "https://example.com", "snippet": "Trecho público"}
+    ])
+    monkeypatch.setattr(
+        service,
+        "_call_llm_text",
+        lambda system, user: v1_answer(
+            "A" * 956, source_urls=["https://example.com"]
+        ),
+    )
+
+    result = service.verify_claim_for_backend("alegação curta")
+
+    assert result["verdict"] == "insufficient_evidence"
+    assert result["counter_narrative"] is None
+
+
 def test_v1_uses_deep_search_after_model_abstention(service, monkeypatch):
     service.hits = [hit("a", 0.90)]
     service._call_llm = lambda system, user: v1_answer("Sem relação.", sufficient=False)

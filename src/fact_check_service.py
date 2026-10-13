@@ -93,6 +93,7 @@ Produza a contranarrativa curta e suas citações numeradas no campo `explanatio
 """
 
 _NARRATIVE_LIMIT = 500
+_DEEP_SEARCH_NARRATIVE_LIMIT = 900
 _REPLY_FIXED_RESERVE = 350
 _MIN_NARRATIVE_CHARS = 80
 _CITATION_PATTERN = re.compile(r"\[(\d+)\]")
@@ -499,13 +500,20 @@ class FactCheckService:
         prompt: PromptBundle,
         *,
         use_web_seam: bool = False,
+        max_explanation_chars: int | None = None,
     ) -> tuple[dict[str, Any], bool]:
         context = _context_from_sources(sources, MAX_CONTEXT_CHARS)
         user_prompt = prompt.render_user(query=query, contexto=context)
+        system_prompt = prompt.render_system()
+        if max_explanation_chars is not None:
+            system_prompt += (
+                "\nLimite o campo explanation a no máximo "
+                f"{max_explanation_chars} caracteres."
+            )
         raw = (
-            self._call_llm_text(prompt.render_system(), user_prompt)
+            self._call_llm_text(system_prompt, user_prompt)
             if use_web_seam
-            else self._call_llm(prompt.render_system(), user_prompt)
+            else self._call_llm(system_prompt, user_prompt)
         )
         answer, structured = parse_answer(raw)
         explanation, report = enforce_grounding(
@@ -561,7 +569,21 @@ class FactCheckService:
         prompt = prompt or load_prompt()
         token = current_prompt.set(None)
         try:
-            decision, _ = self._synthesize(query, web_sources, prompt, use_web_seam=True)
+            decision, _ = self._synthesize(
+                query,
+                web_sources,
+                prompt,
+                use_web_seam=True,
+                max_explanation_chars=_DEEP_SEARCH_NARRATIVE_LIMIT,
+            )
+            if len(decision["explanation"]) > _DEEP_SEARCH_NARRATIVE_LIMIT:
+                decision, _ = self._synthesize(
+                    query,
+                    web_sources,
+                    prompt,
+                    use_web_seam=True,
+                    max_explanation_chars=_DEEP_SEARCH_NARRATIVE_LIMIT,
+                )
         except Exception:
             # Evita registrar mensagens de provedores que possam repetir a alegação.
             logger.warning("Síntese do fallback web falhou.")
@@ -573,6 +595,18 @@ class FactCheckService:
             )
         finally:
             current_prompt.reset(token)
+
+        if (
+            not decision["explanation"]
+            or len(decision["explanation"]) > _DEEP_SEARCH_NARRATIVE_LIMIT
+        ):
+            logger.warning("Síntese DeepSearch vazia ou acima do limite de caracteres")
+            return self._abstention(
+                score,
+                abstention_evidences,
+                claim=query,
+                explanation=abstention_explanation,
+            )
 
         if not validate_output(decision["explanation"]).is_safe:
             return self._blocked(
