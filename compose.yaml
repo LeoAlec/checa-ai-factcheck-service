@@ -2,8 +2,6 @@ services:
   ml-api:
     build:
       context: .
-      args:
-        INSTALL_LOCAL_EMBEDDINGS: ${INSTALL_LOCAL_EMBEDDINGS:-false}
     ports:
       - "127.0.0.1:18001:8000"
     environment:

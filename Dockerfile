@@ -7,10 +7,6 @@ WORKDIR /app
 
 COPY requirements-api.txt .
 RUN pip install --no-cache-dir -r requirements-api.txt
-ARG INSTALL_LOCAL_EMBEDDINGS=false
-RUN if [ "$INSTALL_LOCAL_EMBEDDINGS" = "true" ]; then \
-      pip install --no-cache-dir sentence-transformers; \
-    fi
 
 COPY app.py ./
 COPY src ./src

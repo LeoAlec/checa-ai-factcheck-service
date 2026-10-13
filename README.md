@@ -212,10 +212,8 @@ O contêiner não executa ingestão nem cria a coleção automaticamente.
 
 Configure `OPENAI_API_KEY` no `.env` quando usar embeddings OpenAI ou geração
 via OpenAI. Ajuste `EMBEDDING_PROVIDER`, `EMBEDDING_MODEL` e
-`QDRANT_COLLECTION` para a coleção realmente indexada. Se usar embeddings
-locais, defina explicitamente as três variáveis correspondentes e
-`INSTALL_LOCAL_EMBEDDINGS=true` antes do build. Essa opção instala
-`sentence-transformers` na imagem; a imagem padrão usa embeddings OpenAI.
+`QDRANT_COLLECTION` para a coleção realmente indexada. A imagem usa embeddings
+OpenAI.
 
 Configure `TAVILY_API_KEY` para habilitar o DeepSearch quando os laudos do
 Qdrant não cobrirem a alegação. Sem essa chave, o fallback termina em
