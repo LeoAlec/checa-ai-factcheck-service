@@ -21,6 +21,58 @@ Preencha ao menos `OPENAI_API_KEY`. Para habilitar o fallback web, preencha tamb
 
 Para usar embeddings locais, configure `EMBEDDING_PROVIDER=local`; a coleção precisa ter sido indexada com o mesmo modelo e dimensão utilizados na consulta.
 
+### API de verificação em contêiner
+
+O `ml-api` atende `POST /api/v1/verify` na porta local `18001` e conversa com o
+Qdrant na rede Docker `checa-ai-ml-shared`. A coleção vetorial precisa estar
+indexada previamente com o mesmo provedor, modelo e dimensão de embeddings.
+O contêiner não executa ingestão nem cria a coleção automaticamente.
+
+Configure `OPENAI_API_KEY` no `.env` quando usar embeddings OpenAI ou geração
+via OpenAI. Ajuste `EMBEDDING_PROVIDER`, `EMBEDDING_MODEL` e
+`QDRANT_COLLECTION` para a coleção realmente indexada. A imagem usa embeddings
+OpenAI.
+
+Configure `TAVILY_API_KEY` para habilitar o DeepSearch quando os laudos do
+Qdrant não cobrirem a alegação. Sem essa chave, o fallback termina em
+`insufficient_evidence`; ela não é requisito do `/ready`. As variáveis
+`LANGFUSE_*` e `PROMPT_LABEL` do `.env` também são passadas ao contêiner.
+`/ready` exige uma chave OpenAI e uma coleção já indexada com a dimensão
+correta; o build e o startup não fazem ingestão.
+
+```bash
+docker compose config -q
+docker compose build ml-api
+docker compose up -d
+curl -i http://localhost:18001/ready
+```
+
+`/health` indica que o servidor está vivo. `/ready` retorna `200` somente se
+a coleção configurada existir e sua dimensão corresponder ao modelo de
+embeddings; retorna `503` quando o índice estiver ausente ou incompatível.
+
+Exemplo de chamada:
+
+```bash
+curl -X POST http://localhost:18001/api/v1/verify \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"Mensagem a verificar"}'
+```
+
+Na v1, `matched` inclui somente 1–2 laudos citados do corpus em `sources`.
+`deep_searched` é um resumo cauteloso da busca web, com `sources: []` e sem
+veredito factual. `insufficient_evidence` não tem narrativa nem fontes;
+`blocked` traz uma recusa. `similarity_score` pode ser `null` quando a entrada
+é bloqueada antes da busca. O backend irmão precisa aceitar os quatro
+vereditos antes de consumir este contrato ampliado.
+
+### Teste via CLI (sem servidor)
+
+```bash
+# Para testar a orquestração completa (RAG + DeepSearch + Guardrails)
+python scripts/agent_cli.py
+```
+
 ## Testes
 
 ```powershell

@@ -1,0 +1,14 @@
+# Dependências de runtime da imagem Docker (sem torch/jupyter/pytest).
+# EMBEDDING_PROVIDER=openai (padrão). Para provider "local", adicione sentence-transformers.
+fastapi
+uvicorn[standard]
+pydantic
+jinja2
+openai
+langfuse>=4,<5
+qdrant-client
+python-dotenv
+pandas
+numpy
+tavily-python
+certifi

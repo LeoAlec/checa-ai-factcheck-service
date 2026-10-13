@@ -88,8 +88,9 @@ def perform_web_search(query: str, max_results: int = 5) -> list[dict[str, str |
             search_depth="advanced",
             max_results=max_results,
         )
-    except Exception as exc:
-        log.warning("Busca Tavily falhou: %s", exc)
+    except Exception:
+        # Alguns provedores repetem a consulta dentro da exceção.
+        log.warning("Busca Tavily falhou.")
         return []
 
     return [

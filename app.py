@@ -37,6 +37,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from src import observability
 from src.fact_check_service import FactCheckService
 from src.models import ClaimRequest, FactCheckResponse
+from src.api.v1 import router as v1_router
 
 log = logging.getLogger("checa-ai")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(levelname)-8s %(message)s")
@@ -63,6 +64,8 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+app.include_router(v1_router)
 
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 

@@ -1,5 +1,6 @@
 # Dependências mínimas do CI (sem torch/sentence-transformers/jupyter).
 pytest
+pytest-asyncio
 pydantic
 fastapi
 httpx
@@ -12,5 +13,7 @@ python-dotenv
 pandas
 numpy
 scikit-learn
+snowballstemmer==3.1.1
+openpyxl
 tqdm
 tavily-python
