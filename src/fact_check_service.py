@@ -552,6 +552,7 @@ class FactCheckService:
             "level": answer.evidence_level,
             "explanation": explanation,
             "sources": used_sources,
+            "model_source_urls": tuple(answer.source_urls),
             "guardrails": report.to_dict(),
         }
         return result, structured
@@ -565,6 +566,7 @@ class FactCheckService:
         *,
         web_sources: list[EvidenceSource] | None = None,
         abstention_explanation: str = _ABSTENTION_MESSAGE,
+        include_model_sources: bool = False,
     ) -> dict[str, Any]:
         if web_sources is None:
             raw_results = perform_web_search(query)
@@ -624,7 +626,7 @@ class FactCheckService:
                 "A resposta gerada pela busca externa não atende aos critérios de segurança.",
                 claim=query,
             )
-        return self._result(
+        result = self._result(
             status=OperationalStatus.DEEP_SEARCHED,
             claim=query,
             conclusion=decision["conclusion"],
@@ -635,6 +637,9 @@ class FactCheckService:
             score=score,
             guardrails=decision["guardrails"],
         )
+        if include_model_sources:
+            result["_model_source_urls"] = decision["model_source_urls"]
+        return result
 
     def verify_claim(self, user_message: str, *, session_id: str | None = None) -> dict[str, Any]:
         prompt = load_prompt()
@@ -993,9 +998,31 @@ class FactCheckService:
         }
 
     def _backend_fallback(self, text: str, score: float, evidences: list[Evidence]) -> dict:
-        result = self._deep_search_fallback(text, score, evidences)
+        result = self._deep_search_fallback(
+            text, score, evidences, include_model_sources=True,
+        )
         if result["status"] == "deep_searched":
-            return self._backend_result("deep_searched", score, result["counter_narrative"])
+            declared = set(result.get("_model_source_urls", ()))
+            sources = []
+            source_chars = 0
+            for source in result["sources"]:
+                url = source["url"]
+                if url not in declared or not _safe_source_url(url):
+                    continue
+                added_chars = len(url) + bool(sources)
+                if source_chars + added_chars > 570:
+                    continue
+                sources.append({key: source[key] for key in ("title", "domain", "url")})
+                source_chars += added_chars
+                if len(sources) == 2:
+                    break
+            if not sources:
+                return self._backend_result("insufficient_evidence", score)
+            response = self._backend_result(
+                "deep_searched", score, result["counter_narrative"],
+            )
+            response["sources"] = sources
+            return response
         if result["status"] == "blocked":
             return self._backend_result("blocked", result["score"], result["counter_narrative"])
         return self._backend_result("insufficient_evidence", score)
