@@ -1,0 +1,21 @@
+{
+  "dataset": "evals/heldout_claims_v1.jsonl",
+  "sha256": "710d235211d60d19ad781eae98d35660823cf58af0d3d1d155eaf6020b735ec0",
+  "frozen_at": "2026-10-14",
+  "status": "frozen_test_only",
+  "n": 60,
+  "label_distribution": {
+    "contradita": 21,
+    "inconclusiva": 21,
+    "sustentada": 18
+  },
+  "human_audit": {
+    "sample_size": 20,
+    "completed": 20,
+    "agreement_with_gold": 1.0,
+    "mismatches": []
+  },
+  "evaluation_report": "reports/eval/claims_v4_heldout_v1.json",
+  "evaluation_errors": 7,
+  "policy": "Do not tune prompts, thresholds, or models on this held-out set."
+}

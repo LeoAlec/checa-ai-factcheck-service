@@ -1,0 +1,33 @@
+{
+  "reviewed_at": "2026-10-14",
+  "reviewer": "project_owner",
+  "scope": "complete human review of the 20-item held-out audit sample",
+  "decisions": {
+    "gc-047": "sustentada",
+    "gc-035": "contradita",
+    "gc-012": "inconclusiva",
+    "gc-044": "sustentada",
+    "gc-050": "sustentada",
+    "gc-010": "inconclusiva",
+    "gc-052": "inconclusiva",
+    "gc-031": "sustentada",
+    "gc-038": "contradita",
+    "gc-033": "contradita",
+    "gc-022": "inconclusiva",
+    "gc-041": "contradita",
+    "gc-023": "contradita",
+    "gc-021": "inconclusiva",
+    "gc-034": "contradita",
+    "gc-048": "sustentada",
+    "gc-055": "inconclusiva",
+    "gc-059": "inconclusiva",
+    "gc-028": "sustentada",
+    "gc-020": "inconclusiva"
+  },
+  "agreement_with_gold": true,
+  "notes": {
+    "gc-021": "A ausência de menção ao rastreamento não refuta a alegação específica.",
+    "gc-059": "A evidência de 2018 não cobre de forma inequívoca a referência temporal 'última eleição'.",
+    "remaining_items": "The human reviewer explicitly agreed with the gold label for the other 18 sampled items."
+  }
+}
