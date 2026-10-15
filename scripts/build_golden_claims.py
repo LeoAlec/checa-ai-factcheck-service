@@ -266,6 +266,11 @@ def main() -> int:
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
     parser.add_argument("--report", type=Path, default=DEFAULT_REPORT)
     parser.add_argument("--sample-for-humans", type=int, default=20, help="n de itens para revisão humana (CSV)")
+    parser.add_argument(
+        "--human-review-out",
+        type=Path,
+        help="CSV de revisão; padrão: <nome do --out>_human_review.csv",
+    )
     args = parser.parse_args()
 
     if not os.environ.get("OPENAI_API_KEY"):
@@ -289,7 +294,8 @@ def main() -> int:
 
     if args.sample_for_humans and kept:
         sample = random.Random(args.seed).sample(kept, min(args.sample_for_humans, len(kept)))
-        csv_path = args.out.with_name("golden_claims_human_review.csv")
+        csv_path = args.human_review_out or args.out.with_name(f"{args.out.stem}_human_review.csv")
+        csv_path.parent.mkdir(parents=True, exist_ok=True)
         import csv
 
         with csv_path.open("w", encoding="utf-8", newline="") as fh:

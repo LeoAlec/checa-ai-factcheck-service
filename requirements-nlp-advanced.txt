@@ -1,3 +1,5 @@
 # NLP avancado (opcional): reranker/NLI via transformers; NER via spaCy (python -m spacy download pt_core_news_lg)
 spacy
 transformers
+torch
+sentence-transformers

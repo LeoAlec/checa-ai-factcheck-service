@@ -69,8 +69,11 @@ def _calibrated_threshold(default: float) -> float:
     try:
         import json
 
+        from src.evaluation.calibration import artifact_is_eligible
+
         entry = json.loads(path.read_text(encoding="utf-8")).get(f"{EMBEDDING_PROVIDER}/{EMBED_MODEL}")
-        return float(entry["threshold"]) if entry else default
+        runtime_tier = os.environ.get("RETRIEVAL_CALIBRATION_TIER", "production").strip().lower()
+        return float(entry["threshold"]) if entry and artifact_is_eligible(entry, runtime_tier=runtime_tier) else default
     except (OSError, ValueError, KeyError, TypeError):
         return default
 
@@ -103,7 +106,9 @@ def _env_flag(name: str, default: bool) -> bool:
 
 
 # ─── Híbrido (BM25 + denso, RRF) e reranker cross-encoder ────────────
-HYBRID_ENABLED = _env_flag("HYBRID_ENABLED", True)
+# Desligado por padrão: no A/B pareado (benchmark de 120 casos parafraseados) não
+# houve ganho (4 melhoras x 5 pioras, teste de sinal p=1,0). Ver docs/RETRIEVAL_BENCHMARK.md.
+HYBRID_ENABLED = _env_flag("HYBRID_ENABLED", False)
 HYBRID_LEXICAL_WEIGHT = _env_float("HYBRID_LEXICAL_WEIGHT", 1.2)  # >1 quebra empates do RRF a favor do lexical; tunar com evaluate_retrieval
 RERANKER_ENABLED = _env_flag("RERANKER_ENABLED", False)
 RERANKER_MODEL = os.environ.get("RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
@@ -114,6 +119,8 @@ NER_BACKEND = os.environ.get("NER_BACKEND", "auto").lower()  # auto | spacy | he
 NER_SPACY_MODEL = os.environ.get("NER_SPACY_MODEL", "pt_core_news_lg")
 NLI_ENABLED = _env_flag("NLI_ENABLED", False)
 NLI_MODEL = os.environ.get("NLI_MODEL", "MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7")
+NLI_MODEL_REVISION = os.environ.get("NLI_MODEL_REVISION", "b5113eb")
+NLI_DEVICE = os.environ.get("NLI_DEVICE", "auto").strip().lower()
 NLI_ABSTAIN_ON_DISAGREEMENT = _env_flag("NLI_ABSTAIN_ON_DISAGREEMENT", False)
 
 # ─── LLM ─────────────────────────────────────────────────────────────

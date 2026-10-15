@@ -1,88 +1,88 @@
-"""
-calibrate_threshold.py
-─────────────────────────────────────────────────────────────────────
-Calibra o limiar de similaridade POR provedor/modelo de embedding a partir de
-um relatório de `evaluate_retrieval.py` (casos com `best_score` e rank do
-laudo esperado) e grava em evals/calibrated_thresholds.json, lido por
-`src.config`.
-
-Critério: menor limiar com precisão ≥ `--min-precision` (maximiza cobertura).
-Um "acerto" é: o melhor resultado é o laudo esperado. Casos esperados como
-`abstained` devem ficar abaixo do limiar (contam como falso positivo se passarem).
-
-Uso:
-    python scripts/evaluate_retrieval.py --eval data/eval/retrieval_eval.jsonl
-    python scripts/calibrate_threshold.py --min-precision 0.9
-"""
+"""Select, evaluate and persist a retrieval threshold without split leakage."""
 
 from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from src.evaluation.metrics import bootstrap_ci, calibrate_threshold, precision_coverage_curve  # noqa: E402
+from src.evaluation.calibration import build_calibration_artifact  # noqa: E402
 
 OUT = ROOT / "evals" / "calibrated_thresholds.json"
-MIN_CASES = 40  # abaixo disso o limiar não é estatisticamente defensável
+MIN_CASES = 40
 
 
-def should_answer(row: dict) -> bool:
-    """O sistema deve responder se o laudo esperado foi recuperado em 1º lugar."""
-    return row["expected_status"] == "matched" and row.get("rank") == 1
+def load_dataset_metadata(path: Path) -> dict[str, dict[str, Any]]:
+    rows: dict[str, dict[str, Any]] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            row = json.loads(line)
+            rows[str(row["id"])] = row
+    return rows
 
 
-def calibrate(report: dict, min_precision: float) -> dict:
-    rows = report["cases"]
-    scores = [row["best_score"] for row in rows]
-    labels = [should_answer(row) for row in rows]
-    best = calibrate_threshold(scores, labels, min_precision=min_precision)
-    curve = precision_coverage_curve(scores, labels, [round(x / 100, 2) for x in range(30, 91, 5)])
-    # IC do limiar por bootstrap sobre casos (estabilidade da escolha).
-    import random
+def attach_splits(report_rows: list[dict[str, Any]], dataset_path: Path) -> list[dict[str, Any]]:
+    metadata = load_dataset_metadata(dataset_path)
+    enriched: list[dict[str, Any]] = []
+    for row in report_rows:
+        case_id = str(row.get("id", ""))
+        if case_id not in metadata:
+            raise ValueError(f"caso {case_id!r} não existe no dataset")
+        split = metadata[case_id].get("split")
+        if split not in {"calibration", "test"}:
+            raise ValueError(f"caso {case_id!r} possui split inválido: {split!r}")
+        enriched.append({**row, "split": split})
+    return enriched
 
-    rng = random.Random(13)
-    picks = []
-    for _ in range(300):
-        sample = [rng.randrange(len(rows)) for _ in rows]
-        picked = calibrate_threshold([scores[i] for i in sample], [labels[i] for i in sample], min_precision=min_precision)
-        if picked["threshold"] is not None:
-            picks.append(picked["threshold"])
-    return {
-        "threshold": best["threshold"],
-        "precision": best["precision"],
-        "recall": best["recall"],
-        "met_target": best["met_target"],
-        "min_precision": min_precision,
-        "n_cases": len(rows),
-        "threshold_ci95": bootstrap_ci(picks),
-        "curve": curve,
-        "reliable": len(rows) >= MIN_CASES and best["met_target"],
-    }
+
+def current_commit() -> str | None:
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True, stderr=subprocess.DEVNULL
+        ).strip()
+    except (OSError, subprocess.CalledProcessError):
+        return None
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Calibra limiar por provedor/modelo")
     parser.add_argument("--report", type=Path, default=ROOT / "reports" / "retrieval" / "retrieval_eval_report.json")
+    parser.add_argument("--dataset", type=Path, help="JSONL com os splits; padrão: eval_file do relatório")
+    parser.add_argument("--strategy", choices=("max_f1", "min_precision"), default="min_precision")
     parser.add_argument("--min-precision", type=float, default=0.9)
+    parser.add_argument("--promotion-tier", choices=("none", "pilot", "production"), default="none")
     parser.add_argument("--out", type=Path, default=OUT)
-    parser.add_argument("--force", action="store_true", help="grava mesmo com poucos casos/meta não atingida")
     args = parser.parse_args()
 
     report = json.loads(args.report.read_text(encoding="utf-8"))
+    dataset = args.dataset or Path(report["eval_file"])
+    if not dataset.is_absolute():
+        dataset = ROOT / dataset
+    rows = attach_splits(report["cases"], dataset)
     key = f"{report['embedding_provider']}/{report['embedding_model']}"
-    result = calibrate(report, args.min_precision)
-    print(json.dumps({key: {k: v for k, v in result.items() if k != "curve"}}, indent=2, ensure_ascii=False))
-
-    if not result["reliable"] and not args.force:
-        print(f"⚠️  Não gravado: n={result['n_cases']} (mín. {MIN_CASES}) ou precisão-alvo não atingida. Use --force.", file=sys.stderr)
-        return 1
+    result = build_calibration_artifact(
+        rows=rows,
+        dataset_path=dataset,
+        provider=report["embedding_provider"],
+        model=report["embedding_model"],
+        collection=report["collection"],
+        strategy=args.strategy,
+        promotion_tier=args.promotion_tier,
+        code_commit=current_commit(),
+        min_precision=args.min_precision,
+        minimum_cases=MIN_CASES,
+        dataset_label=dataset.relative_to(ROOT).as_posix() if dataset.is_relative_to(ROOT) else dataset.as_posix(),
+    )
+    print(json.dumps({key: result}, indent=2, ensure_ascii=False))
     current = json.loads(args.out.read_text(encoding="utf-8")) if args.out.exists() else {}
     current[key] = result
+    args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(current, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(f"Gravado em {args.out}")
     return 0

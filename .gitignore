@@ -72,3 +72,10 @@ data/embedding_cache/
 # Isolated implementation workspaces
 .worktrees/
 .superpowers/
+
+# Local test scratch space and generated experiment outputs
+.tmp/
+.pytest-tmp-whatsapp/
+evals/*_llm_review.csv
+evals/*_llm_review_report.json
+data/eval/reranker_benchmark_v1.jsonl

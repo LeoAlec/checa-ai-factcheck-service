@@ -253,6 +253,28 @@ def enforce_grounding(
     )
 
 
+def enforce_evidence_consistency(
+    answer: GeneratedAnswer,
+    *,
+    used_urls: tuple[str, ...] | list[str] | set[str],
+    invalid_citations: tuple[int, ...] | list[int] = (),
+) -> bool:
+    """Fail closed when a factual conclusion has no retained evidence.
+
+    Returns whether the answer had to be downgraded. This is deliberately
+    deterministic; semantic judges remain outside the production path.
+    """
+    inconsistent = bool(invalid_citations) or (
+        answer.conclusion is not EvidenceConclusion.INCONCLUSIVE
+        and (not answer.evidence_sufficient or not used_urls)
+    )
+    if inconsistent:
+        answer.conclusion = EvidenceConclusion.INCONCLUSIVE
+        answer.evidence_sufficient = False
+        answer.evidence_level = EvidenceLevel.LIMITED if used_urls else EvidenceLevel.NONE
+    return inconsistent
+
+
 def injection_risk(text: str, payload_risk: str = "") -> str:
     """Maior risco entre o gravado na ingestão e o recalculado agora (cobre payloads antigos)."""
     now = assess_prompt_injection(text).risk

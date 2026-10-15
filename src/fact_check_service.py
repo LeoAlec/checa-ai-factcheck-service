@@ -47,6 +47,7 @@ from src.rag.guardrails import (
     CLAIM_RESPONSE_FORMAT,
     RESPONSE_FORMAT,
     enforce_grounding,
+    enforce_evidence_consistency,
     parse_answer,
     parse_claim_analysis,
 )
@@ -482,6 +483,16 @@ class FactCheckService:
             score=score,
         )
 
+    @staticmethod
+    def _log_output_block(stage: str, category: str | None, *, trace_id: str | None = None) -> None:
+        """Audit a blocked output without recording user or model content."""
+        logger.error(
+            "Saída bloqueada: stage=%s category=%s trace_id=%s",
+            stage,
+            category or "unspecified",
+            trace_id or "unavailable",
+        )
+
     def _synthesize(
         self,
         query: str,
@@ -506,17 +517,15 @@ class FactCheckService:
         used_urls = set(report.used_urls)
         used_sources = [source for source in sources if source.url in used_urls]
         if report.invalid_citations:
-            answer.evidence_sufficient = False
-            answer.conclusion = EvidenceConclusion.INCONCLUSIVE
-            answer.evidence_level = EvidenceLevel.LIMITED if used_sources else EvidenceLevel.NONE
             explanation = (
                 "A resposta gerada citou uma referência que não pertence às evidências "
                 "recuperadas; por segurança, a conclusão foi marcada como inconclusiva."
             )
-        if not used_sources and answer.evidence_sufficient:
-            answer.evidence_sufficient = False
-            answer.conclusion = EvidenceConclusion.INCONCLUSIVE
-            answer.evidence_level = EvidenceLevel.NONE
+        enforce_evidence_consistency(
+            answer,
+            used_urls=used_urls,
+            invalid_citations=report.invalid_citations,
+        )
         result = {
             "conclusion": answer.conclusion,
             "sufficient": answer.evidence_sufficient,
@@ -564,7 +573,9 @@ class FactCheckService:
         finally:
             current_prompt.reset(token)
 
-        if not validate_output(decision["explanation"]).is_safe:
+        output_validation = validate_output(decision["explanation"])
+        if not output_validation.is_safe:
+            self._log_output_block("web_synthesis", output_validation.category)
             return self._blocked(
                 "A resposta gerada pela busca externa não atende aos critérios de segurança.",
                 claim=query,
@@ -776,7 +787,9 @@ class FactCheckService:
                 web_sources=prefetched_web_sources,
             )
 
-        if not validate_output(explanation).is_safe:
+        output_validation = validate_output(explanation)
+        if not output_validation.is_safe:
+            self._log_output_block("local_synthesis", output_validation.category)
             return self._blocked(
                 "A resposta gerada não atende aos critérios de segurança e não pode ser exibida.",
                 best_score,
@@ -925,7 +938,7 @@ class FactCheckService:
 
         val_result = validate_output(narrative)
         if not val_result.is_safe:
-            logger.error("Blocked harmful v1 output: category=%s", val_result.category)
+            self._log_output_block("v1_generation", val_result.category)
             return self._backend_result(
                 "blocked", best_score,
                 "Desculpe, mas a resposta gerada não atende aos nossos critérios de segurança e não pode ser exibida.",

@@ -63,3 +63,12 @@ def test_parsers_reject_malformed_output():
     assert bgc.parse_items("não é json") == []
     assert bgc.parse_items(json.dumps({"items": [{"claim": "x"}]})) == []
     assert bgc.parse_judgement(json.dumps({"conclusion": "talvez"})) is None
+
+
+def test_review_filename_can_be_derived_without_overwriting_primary_review():
+    heldout = Path("evals/heldout_claims_v1.jsonl")
+
+    review = heldout.with_name(f"{heldout.stem}_human_review.csv")
+
+    assert review.name == "heldout_claims_v1_human_review.csv"
+    assert review.name != "golden_claims_human_review.csv"

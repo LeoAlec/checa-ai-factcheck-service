@@ -34,22 +34,21 @@ Branch: `feat/nlp-review-retrieval-eval`. Esta revisão partiu de uma avaliaçã
 
 Suíte local: 203 testes passando (sem `tests/test_safety_e2e.py`, que exige serviços reais).
 
-## O que NÃO foi feito ou validado
+## Estado validado em 2026-10-14
 
-1. **O golden set de 100 alegações ainda não foi gerado/versionado.** A execução de `scripts/build_golden_claims.py` estava em andamento quando esta branch foi criada. O arquivo `evals/golden_claims.jsonl` e o relatório não estão neste commit. Rode o script e revise o relatório (concordância gerador×juiz, kappa, distribuição por rótulo).
-2. **O golden set é sintético e verificado por LLM, não por humanos.** Mede consistência alegação↔laudo, não verdade no mundo, e herda vieses do gerador e do juiz.
-3. **Nenhuma métrica de retrieval foi medida.** Não há base com laudos reais anotados nem Qdrant executado nesta revisão. O impacto do híbrido, o peso `HYBRID_LEXICAL_WEIGHT=1.2` e o limiar calibrado são **hipóteses a validar**.
-4. **Reranker, spaCy e NLI não foram executados** (modelos não baixados). Só a lógica de fallback foi testada.
-5. **Os repositórios `checa-ai` e `checa-ai-data` não foram acessados** (fora do workspace). O `retrieval_report.json` aberto não foi analisado.
-6. A heurística de entidades só detecta nomes com 2 ou mais palavras capitalizadas e siglas; nomes de uma palavra só (ex.: "Anvisa") dependem do spaCy.
+1. O responsável do projeto confirmou os rótulos do golden set de 100 alegações. Vinte decisões individuais e o protocolo de concordância global estão registrados em `evals/golden_claims_human_decisions.json`; revisões LLM permanecem artefatos auxiliares, não evidência humana.
+2. O prompt v4 foi avaliado em held-out independente de 60 casos: acurácia 0,883 (IC95% 0,800–0,950) e macro-F1 0,888 (IC95% 0,798–0,955).
+3. Uma amostra estratificada de 20 itens desse held-out recebeu revisão humana completa, com concordância de 20/20 com os rótulos de referência. O manifesto congelado está em `evals/heldout_claims_v1_manifest.json`.
+4. Retrieval foi medido em 120 casos reais/parafraseados. O híbrido não apresentou ganho estatisticamente demonstrável e permanece desligado; o limiar 0,65 foi selecionado apenas em calibração e melhorou o teste cego.
+5. O NLI foi executado em L4 e ficou abaixo do LLM, inclusive na estratégia de abstenção por discordância. Ele permanece desligado.
+6. O reranker BGE v2-m3 foi medido em L4 sobre o benchmark offline e piorou o MRR de 0,933 para 0,889 (delta -0,044; IC95% -0,097 a +0,006; teste de sinal p=0,180). Ele permanece desligado; ver `reports/retrieval/reranker_bge_v2_m3_summary.md`.
+7. A heurística de entidades ainda tem cobertura limitada para nomes próprios de uma palavra; o backend spaCy não foi avaliado end-to-end.
 
 ## Próximos passos (em ordem)
 
-1. Gerar e inspecionar o golden set: `python scripts/build_golden_claims.py`. Revisar manualmente o CSV `golden_claims_human_review.csv` (~20 itens) para estimar o erro do juiz.
-2. Rodar `python scripts/eval_golden_claims.py` e, se possível, com `--nli`. Ajustar prompts e limiares `claims_*` conforme os ICs.
-3. Montar um conjunto de retrieval com **laudos reais** (pares alegação→URL) com pelo menos 100 casos. Rodar `evaluate_retrieval.py` com `HYBRID_ENABLED=true` e `false`, comparando recall@k, MRR e nDCG com IC.
-4. Calibrar o limiar: `python scripts/calibrate_threshold.py --min-precision 0.9`, por provedor/modelo de embedding.
-5. Testar `RERANKER_ENABLED=true` e `NER_BACKEND=spacy` (`pip install -r requirements-nlp-advanced.txt`, `python -m spacy download pt_core_news_lg`) e medir ganho versus latência.
-6. Habilitar `NLI_ENABLED=true` em modo só-registro, medir a concordância LLM×NLI e só então decidir sobre abstenção por discordância.
-7. Acompanhar o efeito da temperatura 0.0 no `eval_generation.py` antes do deploy.
-8. Revisar o `retrieval_report.json` e os dados em `checa-ai-data`, adicionando os repositórios ao workspace.
+1. Quando houver credenciais, publicar `evidence-flow-v4` no label de staging do Langfuse e executar o canário documentado em `docs/LANGFUSE_PROMPT_STATUS.md`; produção continua bloqueada até esse passo.
+2. Executar o smoke real de API descrito em `docs/LIVE_E2E.md` com coleção dedicada, preservando o índice real.
+3. Construir um novo conjunto de desenvolvimento para um eventual prompt v5, orientado pela taxonomia dos sete erros do held-out. Não reutilizar o held-out v1 para ajuste.
+4. Avaliar spaCy separadamente por cobertura de entidades, qualidade e latência. NLI, híbrido e reranker permanecem desligados até nova evidência.
+
+O FakeWhatsApp.BR local é uma fonte real e declaradamente anonimizada, mas seus rótulos medem padrão textual de desinformação, não a conclusão evidencial do RAG. Ele deve continuar separado do benchmark alegação→laudo.

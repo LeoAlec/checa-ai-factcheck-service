@@ -15,6 +15,7 @@ e a taxa de concordância LLM×NLI.
 
 Uso:
     python scripts/eval_golden_claims.py [--limit 20] [--nli]
+    python scripts/eval_golden_claims.py --nli-only --baseline reports/eval/claims.json
 Exige OPENAI_API_KEY. Limites mínimos: evals/thresholds.json (`claims_*`).
 """
 
@@ -93,30 +94,46 @@ def main() -> int:
     parser.add_argument("--report", type=Path, default=ROOT / "reports" / "eval" / "claims.json")
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument("--nli", action="store_true", help="compara com o verificador NLI auxiliar")
+    parser.add_argument("--nli-only", action="store_true", help="avalia só o NLI, reutilizando as previsões do relatório-base")
+    parser.add_argument("--baseline", type=Path, default=ROOT / "reports" / "eval" / "claims.json")
     args = parser.parse_args()
 
-    if not os.environ.get("OPENAI_API_KEY"):
+    if not args.nli_only and not os.environ.get("OPENAI_API_KEY"):
         print("❌ OPENAI_API_KEY ausente.", file=sys.stderr)
         return 2
-    if args.nli:
+    if args.nli or args.nli_only:
         os.environ["NLI_ENABLED"] = "true"
-
-    from eval_generation import build_service
 
     items = [json.loads(l) for l in args.golden.read_text(encoding="utf-8").splitlines() if l.strip()]
     if args.limit:
         items = items[: args.limit]
 
+    baseline_by_id = {}
+    if args.nli_only:
+        if not args.baseline.exists():
+            print(f"❌ relatório-base ausente: {args.baseline}", file=sys.stderr)
+            return 2
+        baseline = json.loads(args.baseline.read_text(encoding="utf-8"))
+        baseline_by_id = {row["id"]: row for row in baseline["cases"]}
+
     rows = []
     for item in items:
-        case = to_case(item)
-        try:
-            pred = predict_conclusion(build_service(case).verify_claim(item["claim"]))
-        except Exception as exc:  # noqa: BLE001 - erro do provedor conta como não-resposta
-            print(f"⚠️ {item['id']}: {type(exc).__name__}", file=sys.stderr)
-            pred = "inconclusiva"
+        if args.nli_only:
+            if item["id"] not in baseline_by_id:
+                print(f"❌ caso ausente no relatório-base: {item['id']}", file=sys.stderr)
+                return 2
+            pred = baseline_by_id[item["id"]]["pred"]
+        else:
+            from eval_generation import build_service
+
+            case = to_case(item)
+            try:
+                pred = predict_conclusion(build_service(case).verify_claim(item["claim"]))
+            except Exception as exc:  # noqa: BLE001 - erro do provedor conta como não-resposta
+                print(f"⚠️ {item['id']}: {type(exc).__name__}", file=sys.stderr)
+                pred = "inconclusiva"
         row = {"id": item["id"], "gold": item["gold_conclusion"], "pred": pred, "tags": item["tags"], "claim": item["claim"]}
-        if args.nli:
+        if args.nli or args.nli_only:
             from src.rag import nli
 
             opinion = nli.classify(item["claim"], item["evidence"]["texto"])
@@ -124,14 +141,20 @@ def main() -> int:
         rows.append(row)
 
     summary = summarize(rows)
-    if args.nli:
+    if args.nli or args.nli_only:
         scored = [r for r in rows if r.get("nli")]
-        summary["nli"] = {
-            "accuracy": accuracy([r["gold"] for r in scored], [r["nli"] for r in scored]),
-            "llm_nli_kappa": cohen_kappa([r["pred"] for r in scored], [r["nli"] for r in scored]),
-            "llm_nli_agreement": accuracy([r["pred"] for r in scored], [r["nli"] for r in scored]),
-        }
+        summary["nli"] = {"n": len(scored), "available": bool(scored)}
+        if scored:
+            summary["nli"].update(
+                {
+                    "accuracy": accuracy([r["gold"] for r in scored], [r["nli"] for r in scored]),
+                    "llm_nli_kappa": cohen_kappa([r["pred"] for r in scored], [r["nli"] for r in scored]),
+                    "llm_nli_agreement": accuracy([r["pred"] for r in scored], [r["nli"] for r in scored]),
+                }
+            )
     failures = check_thresholds(summary, json.loads(args.thresholds.read_text()))
+    if (args.nli or args.nli_only) and not summary["nli"]["available"]:
+        failures.append("NLI indisponível: nenhum caso foi pontuado")
 
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(
