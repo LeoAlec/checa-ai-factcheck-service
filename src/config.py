@@ -106,6 +106,12 @@ CLUSTER_NEEDS_SUBCLUSTER_PENALTY = _env_float("CLUSTER_NEEDS_SUBCLUSTER_PENALTY"
 CLUSTER_LOW_CONFIDENCE_PENALTY = _env_float("CLUSTER_LOW_CONFIDENCE_PENALTY", 0.005)
 CLUSTER_HIGH_CONFIDENCE_BONUS = _env_float("CLUSTER_HIGH_CONFIDENCE_BONUS", 0.005)
 
+# ─── Named-entity recognition (experimental) ─────────────────────────
+# "auto" uses spaCy when its optional model is installed and otherwise keeps
+# the existing heuristic behaviour. Production can remain on "heuristic".
+NER_BACKEND = os.environ.get("NER_BACKEND", "heuristic").strip().lower()
+NER_SPACY_MODEL = os.environ.get("NER_SPACY_MODEL", "pt_core_news_lg").strip()
+
 # ─── LLM ─────────────────────────────────────────────────────────────
 LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "openai").strip().lower()
 LLM_MODEL = os.environ.get("LLM_MODEL", "gpt-4o-mini")
