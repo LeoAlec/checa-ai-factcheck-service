@@ -187,6 +187,8 @@ def enforce_grounding(
     answer: GeneratedAnswer,
     allowed: list[tuple[str, str]],
     structured: bool = True,
+    *,
+    append_credit: bool = True,
 ) -> tuple[str, GroundingReport]:
     """
     `allowed`: [(url, dominio)] das evidências recuperadas.
@@ -235,7 +237,7 @@ def enforce_grounding(
         and (bad or not structured or answer._legacy_contract)
     ):
         used = allowed_urls
-    if used and not present:
+    if used and not present and append_credit:
         credit = "\n".join(
             f"Fonte: {domain} — Leia mais em: {url}"
             for url, domain in allowed_ordered

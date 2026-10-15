@@ -60,8 +60,11 @@ curl -X POST http://localhost:18001/api/v1/verify \
 ```
 
 Na v1, `matched` inclui somente 1–2 laudos citados do corpus em `sources`.
-`deep_searched` é um resumo cauteloso da busca web, com `sources: []` e sem
-veredito factual. `insufficient_evidence` não tem narrativa nem fontes;
+`deep_searched` é um resumo cauteloso da busca web, com até duas páginas
+efetivamente indicadas na síntese em `sources` (título, domínio e URL), sem
+veredito factual. URLs ausentes dos resultados do Tavily não são devolvidas.
+Se nenhuma fonte válida puder ser identificada, a v1 retorna
+`insufficient_evidence`, sem narrativa nem fontes;
 `blocked` traz uma recusa. `similarity_score` pode ser `null` quando a entrada
 é bloqueada antes da busca. O backend irmão precisa aceitar os quatro
 vereditos antes de consumir este contrato ampliado.
@@ -108,6 +111,15 @@ está em [Smoke E2E real](docs/LIVE_E2E.md).
 5. Síntese da LLM em JSON estrito.
 6. Validação determinística das URLs contra as evidências recuperadas.
 7. Resposta com conclusão, suficiência, nível, explicação e fontes usadas.
+
+### CI, prompts e avaliação
+
+- **Check obrigatório da branch:** `ci-ok` (verde = testes ok e eval ok ou desnecessário).
+- **Prompt alterado?** Incremente `PROMPT_VERSION` e rode `python scripts/sync_prompts.py --write-lock`; sem isso o teste de contrato falha. `python scripts/sync_prompts.py --check` mostra o que mudaria no Langfuse sem escrever.
+- **Eval local:** `python scripts/eval_generation.py` (usa `OPENAI_API_KEY`, 20 casos, centavos). O golden set é autocontido (evidências no próprio caso), sem Qdrant/DVC. Ao encontrar uma falha real em produção, adicione o caso a `evals/golden.jsonl`.
+- **Comparação com LLM local:** mantenha embeddings e coleção Qdrant inalterados e configure apenas `LLM_PROVIDER`, `LLM_MODEL`, `LLM_BASE_URL` e `LLM_API_KEY`. O procedimento reproduzível está em [Avaliação de LLM local](docs/LOCAL_LLM_EVALUATION.md).
+- **Rollback:** republique o release anterior ou mova o label `production` no Langfuse.
+- **Setup único no GitHub:** secrets `OPENAI_API_KEY`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` (+ variável `LANGFUSE_BASE_URL`); environment `production` com *Required reviewers*; proteger a `main` exigindo o check `ci-ok`. PRs de forks não recebem secrets (o eval é pulado com aviso).
 
 Veja [Arquitetura](docs/ARCHITECTURE.md) e [Contrato da API](docs/API_CONTRACT.md).
 O estado consolidado, os resultados das validações e o plano das próximas fases
@@ -178,6 +190,12 @@ inconclusivos). Uma terceira passagem com GPT-4.1 revisou uma amostra de 20 em
 `golden_claims_llm_review.csv`: houve concordância em 17 casos. Esse arquivo é
 explicitamente uma revisão por LLM e não substitui o preenchimento humano de
 `golden_claims_human_review.csv`.
+
+## Estado do projeto
+
+O fluxo implementado, as validações realizadas, as limitações conhecidas e as
+próximas etapas estão consolidados no
+[roadmap do serviço](docs/PROJECT_STATUS_AND_ROADMAP.md).
 
 ## Limitações da fase 1
 

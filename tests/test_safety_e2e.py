@@ -107,7 +107,7 @@ def live_client() -> Generator[TestClient, None, None]:
 
 
 def _verify(client: TestClient, message: str) -> FactCheckResponse:
-    response = client.post("/api/debunk", json={"message": message})
+    response = client.post("/api/v2/debunk", json={"message": message})
     assert response.status_code == 200, response.text
     return FactCheckResponse.model_validate(response.json())
 

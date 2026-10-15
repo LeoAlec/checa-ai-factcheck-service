@@ -28,6 +28,9 @@ artifacts/
 
 `best_model.joblib` referencia a classe histórica `checa_ai.preprocessing.PortugueseTextPreprocessor`. O avaliador fornece uma implementação compatível e requer `snowballstemmer`, instalado por `requirements-classifier-evaluation.txt`. O adaptador BERTimbau usa somente arquivos locais (`local_files_only=True`) e não baixa pesos.
 
+Use `.env.classifier.example` como referência para configurar as variáveis do
+processo offline sem misturá-las ao runtime da API.
+
 Variáveis:
 
 | Variável | Conteúdo |

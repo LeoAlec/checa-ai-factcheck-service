@@ -72,7 +72,8 @@ Esses estados não equivalem a verdadeiro ou falso.
 
 ## Entregas concluídas
 
-- Serviço independente com contrato Pydantic e endpoint `POST /api/debunk`.
+- Serviço independente com contrato Pydantic evidencial em `POST /api/v2/debunk`,
+  preservando o contrato legado de `POST /api/debunk`.
 - Extração estruturada da alegação para mensagem, notícia e URL.
 - Recuperação pelo Qdrant e fallback web estruturado.
 - Proteção contra prompt injection em entrada e evidências.
@@ -130,7 +131,7 @@ elas não foram removidas nem convertidas em aprovação automática.
 
 - Trabalhar em um repositório próprio ou fork do backend, preservando o remoto
   de referência.
-- Criar um adapter HTTP para `POST /api/debunk` com timeout e tratamento de
+- Criar um adapter HTTP para `POST /api/v1/verify` com timeout e tratamento de
   indisponibilidade.
 - Manter `inconclusiva` como resultado válido, sem convertê-la em erro.
 - Definir processamento assíncrono quando a recuperação e a busca web excederem

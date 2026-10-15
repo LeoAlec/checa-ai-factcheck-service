@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 import os
 import re
-import unicodedata
 from contextvars import ContextVar
 from typing import Any
 from urllib.parse import urlsplit
@@ -18,7 +17,10 @@ from src.config import (
     CONTEXT_SCORE_MARGIN,
     EMBED_MODEL,
     LLM_MAX_RETRIES,
+    LLM_API_KEY,
+    LLM_BASE_URL,
     LLM_MODEL,
+    LLM_PROVIDER,
     LLM_TEMPERATURE,
     LLM_TIMEOUT_SECONDS,
     MAX_CONTEXT_CHARS,
@@ -78,9 +80,6 @@ from src.safety.validator import validate_output
 
 logger = logging.getLogger("checa-ai.fact-check")
 
-_ENTITY_PARTICLES = {"da", "das", "de", "do", "dos", "e"}
-_WORD_RE = re.compile(r"[A-Za-zÀ-ÖØ-öø-ÿ]+")
-
 _BACKEND_SYSTEM_PROMPT = """\
 Você verifica alegações usando somente os laudos fornecidos. Escreva uma
 contranarrativa clara, em português, de até {max_chars} caracteres para WhatsApp.
@@ -101,6 +100,7 @@ Produza a contranarrativa curta e suas citações numeradas no campo `explanatio
 """
 
 _NARRATIVE_LIMIT = 500
+_DEEP_SEARCH_NARRATIVE_LIMIT = 900
 _REPLY_FIXED_RESERVE = 350
 _MIN_NARRATIVE_CHARS = 80
 _CITATION_PATTERN = re.compile(r"\[(\d+)\]")
@@ -129,24 +129,8 @@ def _safe_source_url(url: str) -> bool:
         return False
 
 
-def _normalized_text(value: str) -> str:
-    """Normaliza texto para comparar entidades sem depender de acentuação."""
-    decomposed = unicodedata.normalize("NFKD", value)
-    return " ".join(
-        "".join(char for char in decomposed if not unicodedata.combining(char))
-        .casefold()
-        .split()
-    )
-
-
 def _specific_named_entities(claim: str) -> list[str]:
-    """Extrai as entidades próprias da alegação (spaCy se disponível, senão heurística).
-
-    A função é uma salvaguarda conservadora: ela não prova que uma fonte
-    contradiz a alegação, mas impede que uma fonte sobre outra pessoa seja
-    apresentada como refutação conclusiva. Em mensagens em CAIXA ALTA a
-    heurística não infere entidades, evitando falsos bloqueios.
-    """
+    """Extract named entities with the configured backend and safe fallback."""
     return extract_entities(claim)
 
 
@@ -327,16 +311,24 @@ class FactCheckService:
         if self._llm_client is None:
             import openai
 
-            api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+            if LLM_PROVIDER != "openai" and not LLM_BASE_URL:
+                raise RuntimeError(
+                    "LLM_BASE_URL é obrigatório quando LLM_PROVIDER não é 'openai'."
+                )
+            api_key = LLM_API_KEY or os.environ.get("OPENAI_API_KEY", "").strip()
             if not api_key:
                 raise RuntimeError(
-                    "OPENAI_API_KEY não configurada. Defina a variável de ambiente ou use .env."
+                    "LLM_API_KEY ou OPENAI_API_KEY não configurada. "
+                    "Defina a credencial do provedor de geração no ambiente."
                 )
-            self._llm_client = openai.OpenAI(
+            client_options = dict(
                 api_key=api_key,
                 timeout=LLM_TIMEOUT_SECONDS,
                 max_retries=LLM_MAX_RETRIES,
             )
+            if LLM_BASE_URL:
+                client_options["base_url"] = LLM_BASE_URL
+            self._llm_client = openai.OpenAI(**client_options)
         return self._llm_client
 
     def _call_llm(self, system: str, user: str) -> str:
@@ -500,23 +492,35 @@ class FactCheckService:
         prompt: PromptBundle,
         *,
         use_web_seam: bool = False,
+        max_explanation_chars: int | None = None,
+        include_source_credit: bool = True,
     ) -> tuple[dict[str, Any], bool]:
         context = _context_from_sources(sources, MAX_CONTEXT_CHARS)
         user_prompt = prompt.render_user(query=query, contexto=context)
+        system_prompt = prompt.render_system()
+        if max_explanation_chars is not None:
+            system_prompt += (
+                "\nLimite o campo explanation a no máximo "
+                f"{max_explanation_chars} caracteres."
+            )
         raw = (
-            self._call_llm_text(prompt.render_system(), user_prompt)
+            self._call_llm_text(system_prompt, user_prompt)
             if use_web_seam
-            else self._call_llm(prompt.render_system(), user_prompt)
+            else self._call_llm(system_prompt, user_prompt)
         )
         answer, structured = parse_answer(raw)
         explanation, report = enforce_grounding(
             answer,
             [(source.url, source.domain) for source in sources],
             structured,
+            append_credit=include_source_credit,
         )
         used_urls = set(report.used_urls)
         used_sources = [source for source in sources if source.url in used_urls]
         if report.invalid_citations:
+            answer.evidence_sufficient = False
+            answer.conclusion = EvidenceConclusion.INCONCLUSIVE
+            answer.evidence_level = EvidenceLevel.LIMITED if used_sources else EvidenceLevel.NONE
             explanation = (
                 "A resposta gerada citou uma referência que não pertence às evidências "
                 "recuperadas; por segurança, a conclusão foi marcada como inconclusiva."
@@ -526,12 +530,17 @@ class FactCheckService:
             used_urls=used_urls,
             invalid_citations=report.invalid_citations,
         )
+        if not used_sources and answer.evidence_sufficient:
+            answer.evidence_sufficient = False
+            answer.conclusion = EvidenceConclusion.INCONCLUSIVE
+            answer.evidence_level = EvidenceLevel.NONE
         result = {
             "conclusion": answer.conclusion,
             "sufficient": answer.evidence_sufficient,
             "level": answer.evidence_level,
             "explanation": explanation,
             "sources": used_sources,
+            "model_source_urls": tuple(answer.source_urls),
             "guardrails": report.to_dict(),
         }
         return result, structured
@@ -545,6 +554,7 @@ class FactCheckService:
         *,
         web_sources: list[EvidenceSource] | None = None,
         abstention_explanation: str = _ABSTENTION_MESSAGE,
+        include_model_sources: bool = False,
     ) -> dict[str, Any]:
         if web_sources is None:
             raw_results = perform_web_search(query)
@@ -560,7 +570,23 @@ class FactCheckService:
         prompt = prompt or load_prompt()
         token = current_prompt.set(None)
         try:
-            decision, _ = self._synthesize(query, web_sources, prompt, use_web_seam=True)
+            decision, _ = self._synthesize(
+                query,
+                web_sources,
+                prompt,
+                use_web_seam=True,
+                max_explanation_chars=_DEEP_SEARCH_NARRATIVE_LIMIT,
+                include_source_credit=not include_model_sources,
+            )
+            if len(decision["explanation"]) > _DEEP_SEARCH_NARRATIVE_LIMIT:
+                decision, _ = self._synthesize(
+                    query,
+                    web_sources,
+                    prompt,
+                    use_web_seam=True,
+                    max_explanation_chars=_DEEP_SEARCH_NARRATIVE_LIMIT,
+                    include_source_credit=not include_model_sources,
+                )
         except Exception:
             # Evita registrar mensagens de provedores que possam repetir a alegação.
             logger.warning("Síntese do fallback web falhou.")
@@ -573,6 +599,28 @@ class FactCheckService:
         finally:
             current_prompt.reset(token)
 
+        if not decision["explanation"]:
+            logger.warning("Síntese DeepSearch vazia")
+            return self._abstention(
+                score,
+                abstention_evidences,
+                claim=query,
+                explanation=abstention_explanation,
+            )
+        if len(decision["explanation"]) > _DEEP_SEARCH_NARRATIVE_LIMIT:
+            logger.warning("Síntese DeepSearch acima do limite de caracteres")
+            if not include_model_sources or not decision["sources"]:
+                return self._abstention(
+                    score,
+                    abstention_evidences,
+                    claim=query,
+                    explanation=abstention_explanation,
+                )
+            decision["explanation"] = (
+                "Pesquisei a alegação, mas não encontrei uma checagem conclusiva "
+                "suficiente para confirmar ou refutar o que foi dito."
+            )
+
         output_validation = validate_output(decision["explanation"])
         if not output_validation.is_safe:
             self._log_output_block("web_synthesis", output_validation.category)
@@ -580,7 +628,7 @@ class FactCheckService:
                 "A resposta gerada pela busca externa não atende aos critérios de segurança.",
                 claim=query,
             )
-        return self._result(
+        result = self._result(
             status=OperationalStatus.DEEP_SEARCHED,
             claim=query,
             conclusion=decision["conclusion"],
@@ -591,6 +639,9 @@ class FactCheckService:
             score=score,
             guardrails=decision["guardrails"],
         )
+        if include_model_sources:
+            result["_model_source_urls"] = decision["model_source_urls"]
+        return result
 
     def verify_claim(self, user_message: str, *, session_id: str | None = None) -> dict[str, Any]:
         prompt = load_prompt()
@@ -958,9 +1009,31 @@ class FactCheckService:
         }
 
     def _backend_fallback(self, text: str, score: float, evidences: list[Evidence]) -> dict:
-        result = self._deep_search_fallback(text, score, evidences)
+        result = self._deep_search_fallback(
+            text, score, evidences, include_model_sources=True,
+        )
         if result["status"] == "deep_searched":
-            return self._backend_result("deep_searched", score, result["counter_narrative"])
+            declared = set(result.get("_model_source_urls", ()))
+            sources = []
+            source_chars = 0
+            for source in result["sources"]:
+                url = source["url"]
+                if url not in declared or not _safe_source_url(url):
+                    continue
+                added_chars = len(url) + bool(sources)
+                if source_chars + added_chars > 570:
+                    continue
+                sources.append({key: source[key] for key in ("title", "domain", "url")})
+                source_chars += added_chars
+                if len(sources) == 2:
+                    break
+            if not sources:
+                return self._backend_result("insufficient_evidence", score)
+            response = self._backend_result(
+                "deep_searched", score, result["counter_narrative"],
+            )
+            response["sources"] = sources
+            return response
         if result["status"] == "blocked":
             return self._backend_result("blocked", result["score"], result["counter_narrative"])
         return self._backend_result("insufficient_evidence", score)

@@ -108,7 +108,7 @@ def test_http_flow_returns_supported_claim_and_public_contract(http_flow):
     client, service = http_flow
 
     response = client.post(
-        "/api/debunk",
+        "/api/v2/debunk",
         json={"message": "URGENTE: o ministério confirmou a medida em Recife."},
     )
 
@@ -143,6 +143,24 @@ def test_http_flow_returns_supported_claim_and_public_contract(http_flow):
     assert "score" not in body and "counter_narrative" not in body
 
 
+def test_legacy_http_flow_keeps_original_response_contract(http_flow):
+    client, _ = http_flow
+
+    response = client.post(
+        "/api/debunk",
+        json={"message": "URGENTE: o ministério confirmou a medida em Recife."},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body) == {
+        "status", "score", "evidence", "sources", "counter_narrative", "trace_id"
+    }
+    assert body["status"] == "matched"
+    assert body["evidence"]["url"] == LOCAL_URL
+    assert body["sources"][0]["url"] == LOCAL_URL
+
+
 def test_http_flow_returns_contradicted_with_external_source(http_flow, monkeypatch):
     client, service = http_flow
     service.hits = []
@@ -159,7 +177,7 @@ def test_http_flow_returns_contradicted_with_external_source(http_flow, monkeypa
     )
 
     response = client.post(
-        "/api/debunk",
+        "/api/v2/debunk",
         json={"message": "O ministério confirmou a medida em Recife em 2026."},
     )
 
@@ -176,7 +194,7 @@ def test_http_flow_abstains_before_retrieval_for_vague_message(http_flow):
     service.claim_answer = _claim_analysis(None)
 
     response = client.post(
-        "/api/debunk",
+        "/api/v2/debunk",
         json={"message": "Isso é verdade mesmo?"},
     )
 
@@ -195,7 +213,7 @@ def test_http_flow_accepts_short_message_and_abstains_when_context_is_missing(ht
     client, service = http_flow
     service.claim_answer = _claim_analysis(None)
 
-    response = client.post("/api/debunk", json={"message": "curta"})
+    response = client.post("/api/v2/debunk", json={"message": "curta"})
 
     assert response.status_code == 200
     assert response.json()["conclusion"] == "inconclusiva"

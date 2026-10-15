@@ -47,6 +47,10 @@ models/*.onnx
 models/*
 !models/.gitkeep
 
+# Artefatos externos da avaliação offline de classificadores.
+artifacts/
+classifier-artifacts/
+
 # Exploration temporária
 exploration/
 Fake
@@ -63,6 +67,7 @@ reports/
 # External classifier evaluation (weights, curated data and generated output)
 artifacts/
 classifier-artifacts/
+# Avaliação humana: somente templates são versionados.
 data/evaluation/*
 !data/evaluation/external_messages_template.csv
 !data/evaluation/human_review_cases.template.jsonl

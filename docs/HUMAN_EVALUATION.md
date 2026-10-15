@@ -2,7 +2,7 @@
 
 Esta avaliação mede o fluxo completo da API local, sem modelos classificatórios
 e sem dependência ou alteração de `checa-ai-backend`. Cada caso captura a resposta
-de `/api/debunk`; revisores humanos avaliam a alegação extraída, fontes retornadas,
+de `/api/v2/debunk`; revisores humanos avaliam a alegação extraída, fontes retornadas,
 conclusão, abstenção e URLs citadas.
 
 ## Protocolo

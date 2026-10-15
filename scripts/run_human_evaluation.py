@@ -25,7 +25,7 @@ def main() -> int:
             message = str(row.get("input", "")).strip()
             if not case_id or not message:
                 raise ValueError("cada caso precisa de case_id e input")
-            response = client.post("/api/debunk", json={"message": message})
+            response = client.post("/api/v2/debunk", json={"message": message})
             response.raise_for_status()
             output.write(
                 json.dumps(

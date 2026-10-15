@@ -34,6 +34,9 @@ def fake_service(monkeypatch):
     service.verify_claim_for_backend = verify
     service.verify_claim = lambda text, *, session_id=None: {
         "status": "abstained",
+        "score": 0.1,
+        "evidence": None,
+        "counter_narrative": "Sem checagem.",
         "claim": text,
         "conclusion": "inconclusiva",
         "evidence_sufficient": False,
@@ -179,19 +182,11 @@ async def test_slow_embedding_dimension_does_not_block_health(client, fake_servi
 
 
 @pytest.mark.asyncio
-async def test_current_debunk_route_shape_is_preserved(client, fake_service):
+async def test_legacy_debunk_route_shape_is_preserved(client, fake_service):
     response = await client.post("/api/debunk", json={"message": "alegação longa"})
     assert response.status_code == 200
     assert set(response.json()) == {
-        "status",
-        "claim",
-        "conclusion",
-        "evidence_sufficient",
-        "evidence_level",
-        "explanation",
-        "sources",
-        "probabilistic_assessment",
-        "trace_id",
+        "status", "score", "evidence", "sources", "counter_narrative", "trace_id"
     }
 
 
@@ -215,3 +210,21 @@ async def test_slow_verification_does_not_block_health(client, fake_service):
     finally:
         release.set()
         await pending
+
+
+@pytest.mark.asyncio
+async def test_internal_token_is_enforced_when_configured(client, fake_service, monkeypatch):
+    monkeypatch.setenv("INTERNAL_API_TOKEN", "secret-token")
+    url = "/api/v1/verify"
+    assert (await client.post(url, json={"text": "x"})).status_code == 401
+    wrong = await client.post(url, json={"text": "x"}, headers={"X-Internal-Token": "nope"})
+    assert wrong.status_code == 401
+    ok = await client.post(url, json={"text": "x"}, headers={"X-Internal-Token": "secret-token"})
+    assert ok.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_health_and_ready_do_not_require_internal_token(client, fake_service, monkeypatch):
+    monkeypatch.setenv("INTERNAL_API_TOKEN", "secret-token")
+    assert (await client.get("/health")).status_code == 200
+    assert (await client.get("/ready")).status_code == 200

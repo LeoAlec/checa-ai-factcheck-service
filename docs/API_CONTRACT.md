@@ -1,6 +1,9 @@
 # Contrato da API
 
-## `POST /api/debunk`
+## `POST /api/v2/debunk`
+
+O endpoint não versionado `POST /api/debunk` permanece com o contrato legado
+para compatibilidade com a interface existente.
 
 Entrada:
 
