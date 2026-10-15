@@ -1,0 +1,39 @@
+{
+  "openai/text-embedding-3-small": {
+    "schema_version": 1,
+    "provider": "openai",
+    "model": "text-embedding-3-small",
+    "collection": "fact_checks_pt_v2_openai",
+    "dataset_path": "data/eval/retrieval_benchmark_120_paraphrased.jsonl",
+    "dataset_sha256": "a5022434a0b74fd1709791da96cd11352fb70b1e7bc38dddb03fede05b9b3055",
+    "n_calibration": 60,
+    "n_test": 60,
+    "strategy": "max_f1",
+    "target_precision": null,
+    "threshold": 0.65,
+    "calibration_metrics": {
+      "n_cases": 60,
+      "precision": 0.8181818181818182,
+      "recall": 0.9,
+      "f1": 0.8571428571428572,
+      "tp": 27,
+      "fp": 6,
+      "tn": 25,
+      "fn": 3
+    },
+    "test_metrics": {
+      "n_cases": 60,
+      "precision": 0.7222222222222222,
+      "recall": 0.8666666666666667,
+      "f1": 0.7878787878787877,
+      "tp": 26,
+      "fp": 10,
+      "tn": 23,
+      "fn": 4
+    },
+    "reliable": false,
+    "promotion_tier": "pilot",
+    "code_commit": "773ca48804e679ec9a66d7357de4472a26441239",
+    "generated_at": "2026-10-14T14:50:35.158777+00:00"
+  }
+}

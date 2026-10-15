@@ -59,7 +59,32 @@ CHUNK_OVERLAP = _env_int("CHUNK_OVERLAP", 120)
 DEFAULT_LANGUAGE = os.environ.get("DEFAULT_LANGUAGE", "pt")
 
 # ─── Retrieval ───────────────────────────────────────────────────────
-SIMILARITY_THRESHOLD = _env_float("SIMILARITY_THRESHOLD", 0.60)
+def _calibrated_threshold(default: float) -> float:
+    """Return an eligible calibrated threshold for the active embedding model.
+
+    Pilot artifacts are deliberately ignored in production; an explicit
+    SIMILARITY_THRESHOLD environment value still takes precedence.
+    """
+    path = PROJECT_ROOT / "evals" / "calibrated_thresholds.json"
+    try:
+        import json
+
+        from src.evaluation.calibration import artifact_is_eligible
+
+        entry = json.loads(path.read_text(encoding="utf-8")).get(
+            f"{EMBEDDING_PROVIDER}/{EMBED_MODEL}"
+        )
+        tier = os.environ.get("RETRIEVAL_CALIBRATION_TIER", "production").strip().lower()
+        return (
+            float(entry["threshold"])
+            if entry and artifact_is_eligible(entry, runtime_tier=tier)
+            else default
+        )
+    except (OSError, ValueError, KeyError, TypeError):
+        return default
+
+
+SIMILARITY_THRESHOLD = _env_float("SIMILARITY_THRESHOLD", _calibrated_threshold(0.60))
 # Máximo de chunks que chegam ao LLM, e de documentos distintos entre eles.
 RETRIEVAL_TOP_K = _env_int("RETRIEVAL_TOP_K", 5)
 MAX_DOCUMENTS = _env_int("MAX_DOCUMENTS", 3)

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CalibrationArtifact",
+  "type": "object",
+  "required": ["schema_version", "provider", "model", "collection", "dataset_path", "dataset_sha256", "n_calibration", "n_test", "strategy", "threshold", "reliable", "promotion_tier"],
+  "properties": {
+    "schema_version": {"type": "integer", "minimum": 1},
+    "provider": {"type": "string", "minLength": 1},
+    "model": {"type": "string", "minLength": 1},
+    "collection": {"type": "string", "minLength": 1},
+    "dataset_path": {"type": "string", "minLength": 1},
+    "dataset_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "n_calibration": {"type": "integer", "minimum": 1},
+    "n_test": {"type": "integer", "minimum": 1},
+    "strategy": {"enum": ["max_f1", "min_precision"]},
+    "target_precision": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+    "threshold": {"type": "number"},
+    "reliable": {"type": "boolean"},
+    "promotion_tier": {"enum": ["none", "pilot", "production"]}
+  }
+}

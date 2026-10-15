@@ -1,0 +1,23 @@
+{
+  "generated": 134,
+  "duplicates": 0,
+  "disagreements": 21,
+  "judge_errors": 0,
+  "kept": 100,
+  "by_label": {
+    "sustentada": 30,
+    "contradita": 35,
+    "inconclusiva": 35
+  },
+  "quotas": {
+    "contradita": 35,
+    "sustentada": 30,
+    "inconclusiva": 35
+  },
+  "judge_agreement": 0.8432835820895522,
+  "cohen_kappa_generator_vs_judge": 0.7643610785463072,
+  "complete": true,
+  "generator_model": "gpt-4o",
+  "judge_model": "gpt-4o-mini",
+  "seed": 13
+}
