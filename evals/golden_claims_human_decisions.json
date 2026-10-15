@@ -1,0 +1,28 @@
+{
+  "reviewer_type": "project_owner",
+  "reviewed_at": "2026-10-14",
+  "scope": "The project owner accepted the pre-filled assessment for all 100 cases; the decisions below are the 20 individually logged review entries.",
+  "decision_protocol": "Explicit project-owner review in the evaluation workflow; no LLM review is treated as human evidence.",
+  "decisions": {
+    "gc-034": "sustentada",
+    "gc-038": "sustentada",
+    "gc-088": "inconclusiva",
+    "gc-024": "inconclusiva",
+    "gc-084": "inconclusiva",
+    "gc-030": "contradita",
+    "gc-086": "inconclusiva",
+    "gc-019": "contradita",
+    "gc-029": "contradita",
+    "gc-083": "inconclusiva",
+    "gc-094": "sustentada",
+    "gc-017": "sustentada",
+    "gc-010": "contradita",
+    "gc-069": "contradita",
+    "gc-028": "contradita",
+    "gc-096": "inconclusiva",
+    "gc-004": "contradita",
+    "gc-056": "inconclusiva",
+    "gc-078": "inconclusiva",
+    "gc-002": "sustentada"
+  }
+}
