@@ -34,6 +34,11 @@ from src.rag.chunking import document_id_for
 from src.rag.embeddings import get_embedding_provider
 from src.rag.qdrant import get_qdrant_client
 from src.rag.retriever import evidence_from_hit, select_evidences, unique_sources
+from src.evaluation.metrics import bootstrap_ci, ndcg_at_k, recall_at_k, reciprocal_rank
+from src.config import EMBED_MODEL, EMBEDDING_PROVIDER, HYBRID_ENABLED, HYBRID_LEXICAL_WEIGHT
+from src.rag.hybrid import hybrid_rerank
+from src.rag.reranker import cross_encoder_rerank
+from src.rag.retriever import with_cluster_rerank
 
 DEFAULT_EVAL = Path("data/eval/retrieval_eval.jsonl")
 DEFAULT_REPORT = Path("reports/retrieval/retrieval_eval_report.json")
@@ -69,7 +74,7 @@ def load_cases(path: Path) -> list[EvalCase]:
     return cases
 
 
-def search(client, collection: str, query_vec: list[float], top_k: int):
+def search(client, collection: str, query_vec: list[float], top_k: int, query: str | None = None):
     hits = client.query_points(
         collection_name=collection,
         query=query_vec,
@@ -77,6 +82,12 @@ def search(client, collection: str, query_vec: list[float], top_k: int):
         with_payload=True,
     ).points
     evidences = [evidence_from_hit(hit) for hit in hits]
+    if query is not None:
+        # Mesmo pipeline do serviço: A/B com HYBRID_ENABLED=false / RERANKER_ENABLED=true.
+        evidences = with_cluster_rerank(evidences)
+        if HYBRID_ENABLED:
+            evidences = hybrid_rerank(query, evidences, lexical_weight=HYBRID_LEXICAL_WEIGHT)
+        evidences = cross_encoder_rerank(query, evidences)
     return select_evidences(
         evidences,
         max_chunks=top_k,
@@ -150,15 +161,31 @@ def choose_best_threshold(metrics: list[dict]) -> dict | None:
     return max(metrics, key=lambda row: (row["f1"], row["accuracy"], row["threshold"]))
 
 
+def ranking_metrics(rows: list[dict], k: int) -> dict:
+    """recall@k, MRR e nDCG@k (relevância binária) com IC 95% por bootstrap, só nos casos `matched`."""
+    positives = [row for row in rows if row["expected_status"] == "matched" and row.get("expected_url")]
+    per_case = {"recall": [], "mrr": [], "ndcg": []}
+    for row in positives:
+        ranked = row.get("ranked_urls") or ([row["top_url"]] if row.get("top_url") else [])
+        relevant = {row["expected_url"]}
+        per_case["recall"].append(recall_at_k(ranked, relevant, k))
+        per_case["mrr"].append(reciprocal_rank(ranked, relevant))
+        per_case["ndcg"].append(ndcg_at_k(ranked, relevant, k))
+    return {f"{name}@{k}" if name != "mrr" else "mrr": bootstrap_ci(values) for name, values in per_case.items()}
+
+
 def build_report(rows: list[dict], thresholds: list[float], args: argparse.Namespace) -> dict[str, Any]:
     metrics = [evaluate_at_threshold(rows, threshold) for threshold in thresholds]
     best = choose_best_threshold(metrics)
     return {
         "collection": args.collection,
+        "embedding_provider": EMBEDDING_PROVIDER,
+        "embedding_model": EMBED_MODEL,
         "eval_file": str(args.eval),
         "top_k": args.top_k,
         "current_threshold": args.threshold,
         "recommended_threshold": best["threshold"] if best else None,
+        "ranking": ranking_metrics(rows, args.top_k),
         "cases": rows,
         "thresholds": metrics,
     }
@@ -181,7 +208,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     rows = []
     for case in cases:
         query_vec = provider.embed_query(case.query)
-        evidences = search(client, args.collection, query_vec, args.top_k)
+        evidences = search(client, args.collection, query_vec, args.top_k, query=case.query)
         sources = unique_sources(evidences)
         best_score = evidences[0].score if evidences else 0.0
         rank = rank_of_expected(case, sources)
@@ -194,6 +221,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 "best_score": best_score,
                 "rank": rank,
                 "top_url": sources[0].url if sources else None,
+                "ranked_urls": [s.url for s in sources],
                 "expected_url": case.expected_url,
             }
         )

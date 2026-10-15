@@ -44,6 +44,8 @@ models/*.h5
 models/*.joblib
 models/*.pt
 models/*.onnx
+models/*
+!models/.gitkeep
 
 # Artefatos externos da avaliação offline de classificadores.
 artifacts/
@@ -62,8 +64,12 @@ Thumbs.db
 .env
 reports/
 
+# External classifier evaluation (weights, curated data and generated output)
+artifacts/
+classifier-artifacts/
 # Avaliação humana: somente templates são versionados.
 data/evaluation/*
+!data/evaluation/external_messages_template.csv
 !data/evaluation/human_review_cases.template.jsonl
 !data/evaluation/human_review_template.csv
 data/embedding_cache/
@@ -71,3 +77,10 @@ data/embedding_cache/
 # Isolated implementation workspaces
 .worktrees/
 .superpowers/
+
+# Local test scratch space and generated experiment outputs
+.tmp/
+.pytest-tmp-whatsapp/
+evals/*_llm_review.csv
+evals/*_llm_review_report.json
+data/eval/reranker_benchmark_v1.jsonl

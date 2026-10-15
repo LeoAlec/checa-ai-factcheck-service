@@ -60,10 +60,10 @@ DEFAULT_LANGUAGE = os.environ.get("DEFAULT_LANGUAGE", "pt")
 
 # ─── Retrieval ───────────────────────────────────────────────────────
 def _calibrated_threshold(default: float) -> float:
-    """Return an eligible calibrated threshold for the active embedding model.
+    """Limiar calibrado para `provider/modelo` (scripts/calibrate_threshold.py).
 
-    Pilot artifacts are deliberately ignored in production; an explicit
-    SIMILARITY_THRESHOLD environment value still takes precedence.
+    Cosseno de modelos de embedding diferentes tem distribuições diferentes,
+    então o mesmo valor fixo não é comparável entre provedores.
     """
     path = PROJECT_ROOT / "evals" / "calibrated_thresholds.json"
     try:
@@ -106,6 +106,27 @@ CLUSTER_NEEDS_SUBCLUSTER_PENALTY = _env_float("CLUSTER_NEEDS_SUBCLUSTER_PENALTY"
 CLUSTER_LOW_CONFIDENCE_PENALTY = _env_float("CLUSTER_LOW_CONFIDENCE_PENALTY", 0.005)
 CLUSTER_HIGH_CONFIDENCE_BONUS = _env_float("CLUSTER_HIGH_CONFIDENCE_BONUS", 0.005)
 
+
+def _env_flag(name: str, default: bool) -> bool:
+    return os.environ.get(name, str(default)).strip().lower() in {"1", "true", "yes", "on"}
+
+
+# ─── Híbrido (BM25 + denso, RRF) e reranker cross-encoder ────────────
+# Desligado por padrão: no A/B pareado (benchmark de 120 casos parafraseados) não
+# houve ganho (4 melhoras x 5 pioras, teste de sinal p=1,0). Ver docs/RETRIEVAL_BENCHMARK.md.
+HYBRID_ENABLED = _env_flag("HYBRID_ENABLED", False)
+HYBRID_LEXICAL_WEIGHT = _env_float("HYBRID_LEXICAL_WEIGHT", 1.2)  # >1 quebra empates do RRF a favor do lexical; tunar com evaluate_retrieval
+RERANKER_ENABLED = _env_flag("RERANKER_ENABLED", False)
+RERANKER_MODEL = os.environ.get("RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
+RERANKER_TOP_N = _env_int("RERANKER_TOP_N", 15)
+
+# ─── NLI auxiliar ────────────────────────────────────────────────────
+NLI_ENABLED = _env_flag("NLI_ENABLED", False)
+NLI_MODEL = os.environ.get("NLI_MODEL", "MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7")
+NLI_MODEL_REVISION = os.environ.get("NLI_MODEL_REVISION", "b5113eb")
+NLI_DEVICE = os.environ.get("NLI_DEVICE", "auto").strip().lower()
+NLI_ABSTAIN_ON_DISAGREEMENT = _env_flag("NLI_ABSTAIN_ON_DISAGREEMENT", False)
+
 # ─── Named-entity recognition (experimental) ─────────────────────────
 # "auto" uses spaCy when its optional model is installed and otherwise keeps
 # the existing heuristic behaviour. Production can remain on "heuristic".
@@ -117,7 +138,8 @@ LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "openai").strip().lower()
 LLM_MODEL = os.environ.get("LLM_MODEL", "gpt-4o-mini")
 LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "").strip()
 LLM_API_KEY = os.environ.get("LLM_API_KEY", "").strip()
-LLM_TEMPERATURE = _env_float("LLM_TEMPERATURE", 0.2)
+# Tarefa de classificação/grounding: 0 por padrão para reprodutibilidade.
+LLM_TEMPERATURE = _env_float("LLM_TEMPERATURE", 0.0)
 # Timeout (s) e retries do cliente OpenAI; sem isso uma chamada pendurada trava o worker.
 LLM_TIMEOUT_SECONDS = _env_float("LLM_TIMEOUT_SECONDS", 30.0)
 LLM_MAX_RETRIES = _env_int("LLM_MAX_RETRIES", 2)

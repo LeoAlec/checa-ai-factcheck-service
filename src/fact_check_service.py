@@ -30,6 +30,9 @@ from src.config import (
     SAFE_INJECTION_REFUSAL_MESSAGE,
     SAFE_REFUSAL_MESSAGE,
     SIMILARITY_THRESHOLD,
+    HYBRID_ENABLED,
+    HYBRID_LEXICAL_WEIGHT,
+    NLI_ABSTAIN_ON_DISAGREEMENT,
 )
 from src.models import (
     ClaimAnalysis,
@@ -42,11 +45,11 @@ from src.models import (
 )
 from src.rag.corpus_version import corpus_version
 from src.rag.embeddings import get_embedding_provider
-from src.rag.entities import all_entities_present, extract_entities
 from src.rag.guardrails import (
     CLAIM_RESPONSE_FORMAT,
     RESPONSE_FORMAT,
     enforce_grounding,
+    enforce_evidence_consistency,
     parse_answer,
     parse_claim_analysis,
 )
@@ -66,6 +69,10 @@ from src.rag.retriever import (
     unique_sources,
     with_cluster_rerank,
 )
+from src.rag.entities import all_entities_present, extract_entities
+from src.rag.hybrid import hybrid_rerank
+from src.rag.reranker import cross_encoder_rerank
+from src.rag import nli
 from src.rag.web_search import perform_web_search, validate_web_results
 from src.safety.injection import check_injection
 from src.safety.moderation import check_moderation
@@ -131,6 +138,20 @@ def _contradiction_has_entity_anchor(claim: str, sources: list[EvidenceSource]) 
     """Exige que a refutação mencione a entidade própria principal da alegação."""
     source_text = " ".join(f"{source.title} {source.relevant_excerpt}" for source in sources)
     return all_entities_present(claim, source_text)
+
+
+def _nli_check(claim: str, conclusion: EvidenceConclusion, sources: list[EvidenceSource]) -> dict[str, Any] | None:
+    """Segunda opinião NLI (desligada por padrão). Retorna None sem opinião."""
+    if not sources:
+        return None
+    result = nli.classify(claim, " ".join(s.relevant_excerpt for s in sources))
+    if result is None:
+        return None
+    return {
+        "label": result.label,
+        "conclusion": result.conclusion,
+        "agrees": nli.agrees(conclusion.value, result),
+    }
 
 
 def _evidence_to_dict(ev: Evidence) -> dict[str, Any]:
@@ -267,6 +288,9 @@ class FactCheckService:
                     continue
                 valid.append(item)
             ranked = with_cluster_rerank(valid)
+            if HYBRID_ENABLED:
+                ranked = hybrid_rerank(query, ranked, lexical_weight=HYBRID_LEXICAL_WEIGHT)
+            ranked = cross_encoder_rerank(query, ranked)
             selected = select_evidences(
                 ranked,
                 max_chunks=top_k,
@@ -451,6 +475,16 @@ class FactCheckService:
             score=score,
         )
 
+    @staticmethod
+    def _log_output_block(stage: str, category: str | None, *, trace_id: str | None = None) -> None:
+        """Audit a blocked output without recording user or model content."""
+        logger.error(
+            "Saída bloqueada: stage=%s category=%s trace_id=%s",
+            stage,
+            category or "unspecified",
+            trace_id or "unavailable",
+        )
+
     def _synthesize(
         self,
         query: str,
@@ -491,6 +525,11 @@ class FactCheckService:
                 "A resposta gerada citou uma referência que não pertence às evidências "
                 "recuperadas; por segurança, a conclusão foi marcada como inconclusiva."
             )
+        enforce_evidence_consistency(
+            answer,
+            used_urls=used_urls,
+            invalid_citations=report.invalid_citations,
+        )
         if not used_sources and answer.evidence_sufficient:
             answer.evidence_sufficient = False
             answer.conclusion = EvidenceConclusion.INCONCLUSIVE
@@ -582,7 +621,9 @@ class FactCheckService:
                 "suficiente para confirmar ou refutar o que foi dito."
             )
 
-        if not validate_output(decision["explanation"]).is_safe:
+        output_validation = validate_output(decision["explanation"])
+        if not output_validation.is_safe:
+            self._log_output_block("web_synthesis", output_validation.category)
             return self._blocked(
                 "A resposta gerada pela busca externa não atende aos critérios de segurança.",
                 claim=query,
@@ -738,6 +779,13 @@ class FactCheckService:
             answer.evidence_sufficient = False
             answer.conclusion = EvidenceConclusion.INCONCLUSIVE
 
+        nli_opinion = _nli_check(claim, answer.conclusion, result_sources)
+        if nli_opinion is not None:
+            logger.info("NLI auxiliar: %s", nli_opinion)
+            if nli_opinion["agrees"] is False and NLI_ABSTAIN_ON_DISAGREEMENT:
+                answer.evidence_sufficient = False
+                answer.conclusion = EvidenceConclusion.INCONCLUSIVE
+
         if (
             answer.conclusion is EvidenceConclusion.CONTRADICTED
             and not _contradiction_has_entity_anchor(claim, result_sources)
@@ -790,7 +838,9 @@ class FactCheckService:
                 web_sources=prefetched_web_sources,
             )
 
-        if not validate_output(explanation).is_safe:
+        output_validation = validate_output(explanation)
+        if not output_validation.is_safe:
+            self._log_output_block("local_synthesis", output_validation.category)
             return self._blocked(
                 "A resposta gerada não atende aos critérios de segurança e não pode ser exibida.",
                 best_score,
@@ -939,7 +989,7 @@ class FactCheckService:
 
         val_result = validate_output(narrative)
         if not val_result.is_safe:
-            logger.error("Blocked harmful v1 output: category=%s", val_result.category)
+            self._log_output_block("v1_generation", val_result.category)
             return self._backend_result(
                 "blocked", best_score,
                 "Desculpe, mas a resposta gerada não atende aos nossos critérios de segurança e não pode ser exibida.",

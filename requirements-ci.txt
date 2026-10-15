@@ -8,7 +8,7 @@ jinja2
 uvicorn
 openai
 langfuse>=4,<5
-qdrant-client
+qdrant-client==1.13.3
 python-dotenv
 pandas
 numpy
