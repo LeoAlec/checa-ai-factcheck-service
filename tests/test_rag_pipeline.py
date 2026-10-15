@@ -480,7 +480,27 @@ def test_v1_deep_search_rewrites_oversized_narrative(service, monkeypatch):
     assert len(result["counter_narrative"]) <= fcs._DEEP_SEARCH_NARRATIVE_LIMIT
 
 
-def test_v1_deep_search_abstains_if_rewrite_is_still_oversized(service, monkeypatch):
+def test_v1_deep_search_does_not_count_structured_source_in_narrative_limit(
+    service, monkeypatch,
+):
+    url = 'https://example.com/' + 'a' * 80
+    monkeypatch.setattr(fcs, "perform_web_search", lambda query: [
+        {"title": "Web", "url": url, "snippet": "Trecho público"}
+    ])
+    monkeypatch.setattr(service, "_call_llm_text", lambda system, user: v1_answer(
+        "A" * 880, source_urls=[url],
+    ))
+
+    result = service.verify_claim_for_backend("alegação curta")
+
+    assert result["verdict"] == "deep_searched"
+    assert result["sources"][0]["url"] == url
+    assert result["counter_narrative"] == "A" * 880
+
+
+def test_v1_deep_search_keeps_used_page_with_cautious_summary_if_rewrite_is_oversized(
+    service, monkeypatch,
+):
     monkeypatch.setattr(fcs, "perform_web_search", lambda query: [
         {"title": "Web", "url": "https://example.com", "snippet": "Trecho público"}
     ])
@@ -494,8 +514,10 @@ def test_v1_deep_search_abstains_if_rewrite_is_still_oversized(service, monkeypa
 
     result = service.verify_claim_for_backend("alegação curta")
 
-    assert result["verdict"] == "insufficient_evidence"
-    assert result["counter_narrative"] is None
+    assert result["verdict"] == "deep_searched"
+    assert result["sources"][0]["url"] == "https://example.com"
+    assert "checagem conclusiva" in result["counter_narrative"]
+    assert "A" * 100 not in result["counter_narrative"]
 
 
 def test_v1_uses_deep_search_after_model_abstention(service, monkeypatch):

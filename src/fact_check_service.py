@@ -512,6 +512,7 @@ class FactCheckService:
         *,
         use_web_seam: bool = False,
         max_explanation_chars: int | None = None,
+        include_source_credit: bool = True,
     ) -> tuple[dict[str, Any], bool]:
         context = _context_from_sources(sources, MAX_CONTEXT_CHARS)
         user_prompt = prompt.render_user(query=query, contexto=context)
@@ -531,6 +532,7 @@ class FactCheckService:
             answer,
             [(source.url, source.domain) for source in sources],
             structured,
+            append_credit=include_source_credit,
         )
         used_urls = set(report.used_urls)
         used_sources = [source for source in sources if source.url in used_urls]
@@ -588,6 +590,7 @@ class FactCheckService:
                 prompt,
                 use_web_seam=True,
                 max_explanation_chars=_DEEP_SEARCH_NARRATIVE_LIMIT,
+                include_source_credit=not include_model_sources,
             )
             if len(decision["explanation"]) > _DEEP_SEARCH_NARRATIVE_LIMIT:
                 decision, _ = self._synthesize(
@@ -596,6 +599,7 @@ class FactCheckService:
                     prompt,
                     use_web_seam=True,
                     max_explanation_chars=_DEEP_SEARCH_NARRATIVE_LIMIT,
+                    include_source_credit=not include_model_sources,
                 )
         except Exception:
             # Evita registrar mensagens de provedores que possam repetir a alegação.
@@ -609,16 +613,26 @@ class FactCheckService:
         finally:
             current_prompt.reset(token)
 
-        if (
-            not decision["explanation"]
-            or len(decision["explanation"]) > _DEEP_SEARCH_NARRATIVE_LIMIT
-        ):
-            logger.warning("Síntese DeepSearch vazia ou acima do limite de caracteres")
+        if not decision["explanation"]:
+            logger.warning("Síntese DeepSearch vazia")
             return self._abstention(
                 score,
                 abstention_evidences,
                 claim=query,
                 explanation=abstention_explanation,
+            )
+        if len(decision["explanation"]) > _DEEP_SEARCH_NARRATIVE_LIMIT:
+            logger.warning("Síntese DeepSearch acima do limite de caracteres")
+            if not include_model_sources or not decision["sources"]:
+                return self._abstention(
+                    score,
+                    abstention_evidences,
+                    claim=query,
+                    explanation=abstention_explanation,
+                )
+            decision["explanation"] = (
+                "Pesquisei a alegação, mas não encontrei uma checagem conclusiva "
+                "suficiente para confirmar ou refutar o que foi dito."
             )
 
         if not validate_output(decision["explanation"]).is_safe:
