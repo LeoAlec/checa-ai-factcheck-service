@@ -1,0 +1,4 @@
+# Optional named-entity recognition support.
+# Install a Portuguese model separately, e.g.:
+# python -m spacy download pt_core_news_lg
+spacy
