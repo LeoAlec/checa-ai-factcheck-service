@@ -242,8 +242,11 @@ curl -X POST http://localhost:18001/api/v1/verify \
 ```
 
 Na v1, `matched` inclui somente 1–2 laudos citados do corpus em `sources`.
-`deep_searched` é um resumo cauteloso da busca web, com `sources: []` e sem
-veredito factual. `insufficient_evidence` não tem narrativa nem fontes;
+`deep_searched` é um resumo cauteloso da busca web, com até duas páginas
+efetivamente indicadas na síntese em `sources` (título, domínio e URL), sem
+veredito factual. URLs ausentes dos resultados do Tavily não são devolvidas.
+Se nenhuma fonte válida puder ser identificada, a v1 retorna
+`insufficient_evidence`, sem narrativa nem fontes;
 `blocked` traz uma recusa. `similarity_score` pode ser `null` quando a entrada
 é bloqueada antes da busca. O backend irmão precisa aceitar os quatro
 vereditos antes de consumir este contrato ampliado.

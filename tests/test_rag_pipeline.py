@@ -378,12 +378,87 @@ def test_v1_uses_deep_search_below_threshold(service, monkeypatch):
     monkeypatch.setattr(fcs, "perform_web_search", lambda query: [
         {"title": "Web", "url": "https://example.com", "snippet": "Trecho público"}
     ])
+    monkeypatch.setattr(service, "_call_llm_text", lambda system, user: v1_answer(
+        "A evidência externa resolve a alegação [1].",
+        source_urls=["https://example.com"],
+    ))
 
     result = service.verify_claim_for_backend("alegação curta")
 
     assert result["verdict"] == "deep_searched"
-    assert result["sources"] == []
+    assert [source["url"] for source in result["sources"]] == ["https://example.com"]
     assert "A evidência externa resolve a alegação" in result["counter_narrative"]
+
+
+def test_v1_deep_search_returns_only_a_page_named_by_the_model(service, monkeypatch):
+    monkeypatch.setattr(fcs, "perform_web_search", lambda query: [
+        {"title": "Primeira", "url": "https://one.example/a", "snippet": "Trecho um"},
+        {"title": "Segunda", "url": "https://two.example/b", "snippet": "Trecho dois"},
+        {"title": "Terceira", "url": "https://three.example/c", "snippet": "Trecho três"},
+    ])
+    monkeypatch.setattr(service, "_call_llm_text", lambda system, user: v1_answer(
+        "A pesquisa encontrou contexto, sem checagem conclusiva.",
+        source_urls=["https://two.example/b"],
+    ))
+
+    result = service.verify_claim_for_backend("alegação curta")
+
+    assert result["verdict"] == "deep_searched"
+    assert result["sources"] == [{
+        "title": "Segunda", "domain": "two.example", "url": "https://two.example/b",
+    }]
+
+
+@pytest.mark.parametrize("declared", [[], ["https://invented.example/x"]])
+def test_v1_deep_search_without_a_grounded_declared_page_abstains(
+    service, monkeypatch, declared,
+):
+    monkeypatch.setattr(fcs, "perform_web_search", lambda query: [
+        {"title": "Página", "url": "https://one.example/a", "snippet": "Trecho"},
+    ])
+    monkeypatch.setattr(service, "_call_llm_text", lambda system, user: v1_answer(
+        "A pesquisa encontrou contexto, sem checagem conclusiva.", source_urls=declared,
+    ))
+
+    result = service.verify_claim_for_backend("alegação curta")
+
+    assert result["verdict"] == "insufficient_evidence"
+    assert result["sources"] == []
+
+
+def test_v1_deep_search_deduplicates_and_limits_declared_pages(service, monkeypatch):
+    monkeypatch.setattr(fcs, "perform_web_search", lambda query: [
+        {"title": title, "url": f"https://{host}.example/a", "snippet": "Trecho"}
+        for title, host in (("A", "a"), ("B", "b"), ("C", "c"))
+    ])
+    monkeypatch.setattr(service, "_call_llm_text", lambda system, user: v1_answer(
+        "A pesquisa encontrou contexto, sem checagem conclusiva.",
+        source_urls=["https://c.example/a", "https://b.example/a",
+                     "https://a.example/a", "https://b.example/a"],
+    ))
+
+    result = service.verify_claim_for_backend("alegação curta")
+
+    assert result["verdict"] == "deep_searched"
+    assert [source["url"] for source in result["sources"]] == [
+        "https://a.example/a", "https://b.example/a",
+    ]
+
+
+def test_v1_deep_search_abstains_when_used_page_cannot_fit(service, monkeypatch):
+    long_url = "https://one.example/" + "x" * 560
+    monkeypatch.setattr(fcs, "perform_web_search", lambda query: [
+        {"title": "Página", "url": long_url, "snippet": "Trecho"},
+    ])
+    monkeypatch.setattr(service, "_call_llm_text", lambda system, user: v1_answer(
+        "A pesquisa encontrou contexto, sem checagem conclusiva.",
+        source_urls=[long_url],
+    ))
+
+    result = service.verify_claim_for_backend("alegação curta")
+
+    assert result["verdict"] == "insufficient_evidence"
+    assert result["sources"] == []
 
 
 def test_v1_deep_search_rewrites_oversized_narrative(service, monkeypatch):
@@ -405,7 +480,27 @@ def test_v1_deep_search_rewrites_oversized_narrative(service, monkeypatch):
     assert len(result["counter_narrative"]) <= fcs._DEEP_SEARCH_NARRATIVE_LIMIT
 
 
-def test_v1_deep_search_abstains_if_rewrite_is_still_oversized(service, monkeypatch):
+def test_v1_deep_search_does_not_count_structured_source_in_narrative_limit(
+    service, monkeypatch,
+):
+    url = 'https://example.com/' + 'a' * 80
+    monkeypatch.setattr(fcs, "perform_web_search", lambda query: [
+        {"title": "Web", "url": url, "snippet": "Trecho público"}
+    ])
+    monkeypatch.setattr(service, "_call_llm_text", lambda system, user: v1_answer(
+        "A" * 880, source_urls=[url],
+    ))
+
+    result = service.verify_claim_for_backend("alegação curta")
+
+    assert result["verdict"] == "deep_searched"
+    assert result["sources"][0]["url"] == url
+    assert result["counter_narrative"] == "A" * 880
+
+
+def test_v1_deep_search_keeps_used_page_with_cautious_summary_if_rewrite_is_oversized(
+    service, monkeypatch,
+):
     monkeypatch.setattr(fcs, "perform_web_search", lambda query: [
         {"title": "Web", "url": "https://example.com", "snippet": "Trecho público"}
     ])
@@ -419,8 +514,10 @@ def test_v1_deep_search_abstains_if_rewrite_is_still_oversized(service, monkeypa
 
     result = service.verify_claim_for_backend("alegação curta")
 
-    assert result["verdict"] == "insufficient_evidence"
-    assert result["counter_narrative"] is None
+    assert result["verdict"] == "deep_searched"
+    assert result["sources"][0]["url"] == "https://example.com"
+    assert "checagem conclusiva" in result["counter_narrative"]
+    assert "A" * 100 not in result["counter_narrative"]
 
 
 def test_v1_uses_deep_search_after_model_abstention(service, monkeypatch):
@@ -429,11 +526,14 @@ def test_v1_uses_deep_search_after_model_abstention(service, monkeypatch):
     monkeypatch.setattr(fcs, "perform_web_search", lambda query: [
         {"title": "Web", "url": "https://example.com", "snippet": "Trecho público"}
     ])
+    monkeypatch.setattr(service, "_call_llm_text", lambda system, user: v1_answer(
+        "A pesquisa encontrou contexto [1].", source_urls=["https://example.com"],
+    ))
 
     result = service.verify_claim_for_backend("alegação curta")
 
     assert result["verdict"] == "deep_searched"
-    assert result["sources"] == []
+    assert [source["url"] for source in result["sources"]] == ["https://example.com"]
 
 
 def test_v1_blocks_unsafe_generated_output(service, monkeypatch):
@@ -455,6 +555,9 @@ def test_v1_does_not_log_claim_or_web_snippets(service, monkeypatch, caplog):
     monkeypatch.setattr(fcs, "perform_web_search", lambda query: [
         {"title": "Web", "url": "https://example.com", "snippet": snippet}
     ])
+    monkeypatch.setattr(service, "_call_llm_text", lambda system, user: v1_answer(
+        "A pesquisa encontrou contexto [1].", source_urls=["https://example.com"],
+    ))
 
     with caplog.at_level("INFO"):
         result = service.verify_claim_for_backend(claim)

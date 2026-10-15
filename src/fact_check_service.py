@@ -459,6 +459,7 @@ class FactCheckService:
         *,
         use_web_seam: bool = False,
         max_explanation_chars: int | None = None,
+        include_source_credit: bool = True,
     ) -> tuple[dict[str, Any], bool]:
         context = _context_from_sources(sources, MAX_CONTEXT_CHARS)
         user_prompt = prompt.render_user(query=query, contexto=context)
@@ -478,6 +479,7 @@ class FactCheckService:
             answer,
             [(source.url, source.domain) for source in sources],
             structured,
+            append_credit=include_source_credit,
         )
         used_urls = set(report.used_urls)
         used_sources = [source for source in sources if source.url in used_urls]
@@ -499,6 +501,7 @@ class FactCheckService:
             "level": answer.evidence_level,
             "explanation": explanation,
             "sources": used_sources,
+            "model_source_urls": tuple(answer.source_urls),
             "guardrails": report.to_dict(),
         }
         return result, structured
@@ -512,6 +515,7 @@ class FactCheckService:
         *,
         web_sources: list[EvidenceSource] | None = None,
         abstention_explanation: str = _ABSTENTION_MESSAGE,
+        include_model_sources: bool = False,
     ) -> dict[str, Any]:
         if web_sources is None:
             raw_results = perform_web_search(query)
@@ -533,6 +537,7 @@ class FactCheckService:
                 prompt,
                 use_web_seam=True,
                 max_explanation_chars=_DEEP_SEARCH_NARRATIVE_LIMIT,
+                include_source_credit=not include_model_sources,
             )
             if len(decision["explanation"]) > _DEEP_SEARCH_NARRATIVE_LIMIT:
                 decision, _ = self._synthesize(
@@ -541,6 +546,7 @@ class FactCheckService:
                     prompt,
                     use_web_seam=True,
                     max_explanation_chars=_DEEP_SEARCH_NARRATIVE_LIMIT,
+                    include_source_credit=not include_model_sources,
                 )
         except Exception:
             # Evita registrar mensagens de provedores que possam repetir a alegação.
@@ -554,16 +560,26 @@ class FactCheckService:
         finally:
             current_prompt.reset(token)
 
-        if (
-            not decision["explanation"]
-            or len(decision["explanation"]) > _DEEP_SEARCH_NARRATIVE_LIMIT
-        ):
-            logger.warning("Síntese DeepSearch vazia ou acima do limite de caracteres")
+        if not decision["explanation"]:
+            logger.warning("Síntese DeepSearch vazia")
             return self._abstention(
                 score,
                 abstention_evidences,
                 claim=query,
                 explanation=abstention_explanation,
+            )
+        if len(decision["explanation"]) > _DEEP_SEARCH_NARRATIVE_LIMIT:
+            logger.warning("Síntese DeepSearch acima do limite de caracteres")
+            if not include_model_sources or not decision["sources"]:
+                return self._abstention(
+                    score,
+                    abstention_evidences,
+                    claim=query,
+                    explanation=abstention_explanation,
+                )
+            decision["explanation"] = (
+                "Pesquisei a alegação, mas não encontrei uma checagem conclusiva "
+                "suficiente para confirmar ou refutar o que foi dito."
             )
 
         if not validate_output(decision["explanation"]).is_safe:
@@ -571,7 +587,7 @@ class FactCheckService:
                 "A resposta gerada pela busca externa não atende aos critérios de segurança.",
                 claim=query,
             )
-        return self._result(
+        result = self._result(
             status=OperationalStatus.DEEP_SEARCHED,
             claim=query,
             conclusion=decision["conclusion"],
@@ -582,6 +598,9 @@ class FactCheckService:
             score=score,
             guardrails=decision["guardrails"],
         )
+        if include_model_sources:
+            result["_model_source_urls"] = decision["model_source_urls"]
+        return result
 
     def verify_claim(self, user_message: str, *, session_id: str | None = None) -> dict[str, Any]:
         prompt = load_prompt()
@@ -940,9 +959,31 @@ class FactCheckService:
         }
 
     def _backend_fallback(self, text: str, score: float, evidences: list[Evidence]) -> dict:
-        result = self._deep_search_fallback(text, score, evidences)
+        result = self._deep_search_fallback(
+            text, score, evidences, include_model_sources=True,
+        )
         if result["status"] == "deep_searched":
-            return self._backend_result("deep_searched", score, result["counter_narrative"])
+            declared = set(result.get("_model_source_urls", ()))
+            sources = []
+            source_chars = 0
+            for source in result["sources"]:
+                url = source["url"]
+                if url not in declared or not _safe_source_url(url):
+                    continue
+                added_chars = len(url) + bool(sources)
+                if source_chars + added_chars > 570:
+                    continue
+                sources.append({key: source[key] for key in ("title", "domain", "url")})
+                source_chars += added_chars
+                if len(sources) == 2:
+                    break
+            if not sources:
+                return self._backend_result("insufficient_evidence", score)
+            response = self._backend_result(
+                "deep_searched", score, result["counter_narrative"],
+            )
+            response["sources"] = sources
+            return response
         if result["status"] == "blocked":
             return self._backend_result("blocked", result["score"], result["counter_narrative"])
         return self._backend_result("insufficient_evidence", score)
